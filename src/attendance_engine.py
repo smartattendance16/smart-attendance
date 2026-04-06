@@ -2,18 +2,20 @@
 attendance_engine.py
 --------------------
 Handles the camera stream, face recognition, and attendance marking.
-Imported by app.py.  Can also mark attendance to both SQLite and daily CSV.
+Imported by app.py.  Can also mark attendance to both DB and daily CSV.
+Uses db.py for database connections (PostgreSQL or SQLite).
 """
 
 import cv2
 import face_recognition
 import numpy as np
 import pickle
-import sqlite3
 import csv
 import os
 import threading
 from datetime import date, datetime
+
+from db import get_db, USE_PG
 
 
 class AttendanceEngine:
@@ -25,15 +27,36 @@ class AttendanceEngine:
         self.known_data      = self._load_encodings()
         self.video           = None
         self._lock           = threading.Lock()
-        self._marked_today   : set = set()   # in-memory cache per session
+        self._marked_today   : set = set()
 
         os.makedirs(attendance_dir, exist_ok=True)
 
     # ── Encodings ─────────────────────────────────────────────────────────────
     def _load_encodings(self) -> dict:
+        """Load face encodings from DB (PostgreSQL) or pickle file (local)."""
+        try:
+            conn = get_db(self.db_path)
+            rows = conn.execute(
+                'SELECT student_id, name, encoding FROM face_encodings'
+            ).fetchall()
+            conn.close()
+
+            if rows:
+                data = {'encodings': [], 'ids': [], 'names': []}
+                for row in rows:
+                    enc = np.frombuffer(bytes(row['encoding']), dtype=np.float64)
+                    data['encodings'].append(enc)
+                    data['ids'].append(row['student_id'])
+                    data['names'].append(row['name'])
+                return data
+        except Exception:
+            pass  # Table might not exist yet on first run
+
+        # Fallback to pickle file (local dev)
         if os.path.exists(self.encodings_path):
             with open(self.encodings_path, 'rb') as f:
                 return pickle.load(f)
+
         return {'encodings': [], 'ids': [], 'names': []}
 
     def reload_encodings(self):
@@ -41,32 +64,63 @@ class AttendanceEngine:
         self.known_data = self._load_encodings()
 
     def save_encodings(self):
+        """Save to pickle file (local cache)."""
         os.makedirs(os.path.dirname(self.encodings_path), exist_ok=True)
         with open(self.encodings_path, 'wb') as f:
             pickle.dump(self.known_data, f)
 
     def add_encoding(self, student_id: str, name: str, encoding):
-        """Append a single encoding and persist to disk."""
+        """Append a single encoding, persist to DB and local pickle."""
         self.known_data['encodings'].append(encoding)
         self.known_data['ids'].append(student_id)
         self.known_data['names'].append(name)
-        self.save_encodings()
+
+        # Save to database
+        try:
+            conn = get_db(self.db_path)
+            conn.execute(
+                'INSERT INTO face_encodings (student_id, name, encoding) VALUES (?, ?, ?)',
+                (student_id, name, encoding.tobytes())
+            )
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f'[ENGINE] Warning: could not save encoding to DB: {e}')
+
+        # Also save to pickle as local cache
+        try:
+            self.save_encodings()
+        except Exception:
+            pass
 
     def remove_encoding(self, student_id: str):
-        """Remove all encodings for a student."""
+        """Remove all encodings for a student from memory, DB, and pickle."""
         indices = [i for i, sid in enumerate(self.known_data['ids'])
                    if sid == student_id]
         for i in reversed(indices):
             self.known_data['encodings'].pop(i)
             self.known_data['ids'].pop(i)
             self.known_data['names'].pop(i)
-        self.save_encodings()
+
+        # Remove from database
+        try:
+            conn = get_db(self.db_path)
+            conn.execute('DELETE FROM face_encodings WHERE student_id=?', (student_id,))
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f'[ENGINE] Warning: could not remove encoding from DB: {e}')
+
+        try:
+            self.save_encodings()
+        except Exception:
+            pass
 
     # ── Camera ────────────────────────────────────────────────────────────────
     def open_camera(self, index: int = 0):
         if self.video is None or not self.video.isOpened():
             self.video = cv2.VideoCapture(index)
-            self._marked_today.clear()   # fresh set each camera session
+            self._marked_today.clear()
 
     def close_camera(self):
         if self.video and self.video.isOpened():
@@ -86,15 +140,14 @@ class AttendanceEngine:
         now   = datetime.now().strftime('%H:%M:%S')
 
         with self._lock:
-            conn = sqlite3.connect(self.db_path)
-            cur  = conn.cursor()
-            existing = cur.execute(
+            conn = get_db(self.db_path)
+            existing = conn.execute(
                 'SELECT 1 FROM attendance WHERE student_id=? AND date=?',
                 (student_id, today)
             ).fetchone()
 
             if not existing:
-                cur.execute(
+                conn.execute(
                     'INSERT INTO attendance (student_id, name, date, time, status) '
                     'VALUES (?,?,?,?,?)',
                     (student_id, name, today, now, 'Present')
@@ -109,11 +162,14 @@ class AttendanceEngine:
     def _append_csv(self, student_id: str, name: str, today: str, now: str):
         csv_path   = os.path.join(self.attendance_dir, f'attendance_{today}.csv')
         new_file   = not os.path.exists(csv_path)
-        with open(csv_path, 'a', newline='') as f:
-            writer = csv.writer(f)
-            if new_file:
-                writer.writerow(['Student ID', 'Name', 'Date', 'Time', 'Status'])
-            writer.writerow([student_id, name, today, now, 'Present'])
+        try:
+            with open(csv_path, 'a', newline='') as f:
+                writer = csv.writer(f)
+                if new_file:
+                    writer.writerow(['Student ID', 'Name', 'Date', 'Time', 'Status'])
+                writer.writerow([student_id, name, today, now, 'Present'])
+        except Exception:
+            pass  # CSV is optional, DB is the source of truth
 
     # ── Frame processing ──────────────────────────────────────────────────────
     def get_frame(self) -> bytes | None:

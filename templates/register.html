@@ -81,7 +81,7 @@
               <td>{{ s.student_id }}</td>
               <td class="fw-semibold">{{ s.name }}</td>
               <td>{{ s.department or '—' }}</td>
-              <td>{{ s.created_at[:10] }}</td>
+              <td>{{ s.created_at|fmtdate }}</td>
               <td>
                 <a href="{{ url_for('delete_student', student_id=s.student_id) }}"
                    class="btn btn-sm btn-outline-danger"

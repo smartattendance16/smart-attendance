@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-# Install system dependencies for dlib/face_recognition and OpenCV
+# Install system dependencies for dlib/face_recognition, OpenCV, and PostgreSQL
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     cmake \
@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libboost-python-dev \
     libgl1 \
     libglib2.0-0 \
+    libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

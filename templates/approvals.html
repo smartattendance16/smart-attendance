@@ -53,7 +53,7 @@
           {% endif %}
           <tr>
             <td class="text-muted">Submitted</td>
-            <td>{{ r.submitted_at[:16] }}</td>
+            <td>{{ r.submitted_at|fmtdatetime }}</td>
           </tr>
         </table>
 
@@ -82,7 +82,7 @@
     <p class="mt-2 mb-0">No pending requests right now.</p>
     <p class="small mt-1">
       Share this link with students:
-      <strong>http://127.0.0.1:5000/self-register</strong>
+      <strong>{{ url_for('self_register', _external=True) }}</strong>
     </p>
   </div>
   {% endif %}
@@ -96,7 +96,7 @@
   <p class="small text-muted mb-2">Share this link with students to let them register themselves:</p>
   <div class="input-group">
     <input type="text" class="form-control form-control-sm"
-           id="regLink" value="http://127.0.0.1:5000/self-register" readonly>
+           id="regLink" value="{{ url_for('self_register', _external=True) }}" readonly>
     <button class="btn btn-sm btn-outline-primary" onclick="copyLink()">
       <i class="bi bi-clipboard"></i> Copy
     </button>
@@ -129,7 +129,7 @@
           <td>{{ r.student_id }}</td>
           <td class="fw-semibold">{{ r.name }}</td>
           <td>{{ r.department or '—' }}</td>
-          <td>{{ r.submitted_at[:10] }}</td>
+          <td>{{ r.submitted_at|fmtdate }}</td>
           <td>
             {% if r.status == 'approved' %}
               <span class="badge-present">✅ Approved</span>

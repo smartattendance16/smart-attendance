@@ -5,7 +5,6 @@ Run from project root:  python src/app.py
 
 import os
 import io
-import sqlite3
 import random
 import string
 import smtplib
@@ -20,7 +19,8 @@ from flask_login import (LoginManager, UserMixin, current_user, login_required,
                          login_user, logout_user)
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from attendance_engine import AttendanceEngine   # same src/ folder
+from db import get_db as _raw_get_db, init_db as _raw_init_db, DBIntegrityError, USE_PG
+from attendance_engine import AttendanceEngine
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 SRC_DIR       = os.path.dirname(os.path.abspath(__file__))
@@ -44,72 +44,40 @@ app.secret_key = os.environ.get('SECRET_KEY', os.urandom(32).hex())
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 
-# ── Attendance Engine (singleton) ─────────────────────────────────────────────
-engine = AttendanceEngine(ENCODINGS_PKL, DB_PATH, ATTENDANCE_DIR)
+# ── Template filters ──────────────────────────────────────────────────────────
+@app.template_filter('fmtdate')
+def fmtdate(value):
+    """Format a date/datetime/string to YYYY-MM-DD."""
+    if value is None:
+        return '—'
+    if isinstance(value, str):
+        return value[:10]
+    try:
+        return value.strftime('%Y-%m-%d')
+    except Exception:
+        return str(value)[:10]
 
-# ── Database ──────────────────────────────────────────────────────────────────
+@app.template_filter('fmtdatetime')
+def fmtdatetime(value):
+    """Format to YYYY-MM-DD HH:MM."""
+    if value is None:
+        return '—'
+    if isinstance(value, str):
+        return value[:16]
+    try:
+        return value.strftime('%Y-%m-%d %H:%M')
+    except Exception:
+        return str(value)[:16]
+
+# ── Database helpers ──────────────────────────────────────────────────────────
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+    return _raw_get_db(DB_PATH)
 
 def init_db():
-    conn = get_db()
-    conn.executescript('''
-        CREATE TABLE IF NOT EXISTS admin (
-            id       INTEGER PRIMARY KEY,
-            username TEXT UNIQUE NOT NULL,
-            password TEXT NOT NULL,
-            email    TEXT DEFAULT ''
-        );
-        CREATE TABLE IF NOT EXISTS otp_tokens (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
-            username   TEXT NOT NULL,
-            otp        TEXT NOT NULL,
-            expires_at TIMESTAMP NOT NULL,
-            used       INTEGER DEFAULT 0
-        );
-        CREATE TABLE IF NOT EXISTS students (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
-            student_id TEXT UNIQUE NOT NULL,
-            name       TEXT NOT NULL,
-            email      TEXT DEFAULT '',
-            department TEXT DEFAULT '',
-            phone      TEXT DEFAULT '',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-        CREATE TABLE IF NOT EXISTS attendance (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
-            student_id TEXT NOT NULL,
-            name       TEXT NOT NULL,
-            date       DATE NOT NULL,
-            time       TIME NOT NULL,
-            status     TEXT DEFAULT 'Present'
-        );
-        CREATE TABLE IF NOT EXISTS pending_students (
-            id           INTEGER PRIMARY KEY AUTOINCREMENT,
-            student_id   TEXT UNIQUE NOT NULL,
-            name         TEXT NOT NULL,
-            email        TEXT DEFAULT '',
-            department   TEXT DEFAULT '',
-            phone        TEXT DEFAULT '',
-            photo_path   TEXT DEFAULT '',
-            status       TEXT DEFAULT 'pending',
-            submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            reviewed_at  TIMESTAMP,
-            reviewed_by  TEXT DEFAULT ''
-        );
-    ''')
-    conn.execute("INSERT OR IGNORE INTO admin (username,password) VALUES (?,?)",
-                 ('admin', generate_password_hash('admin123')))
-    conn.commit()
+    _raw_init_db(DB_PATH)
 
-    # ── Migrations: add new columns if missing ────────────────────────────────
-    existing_cols = [r[1] for r in conn.execute('PRAGMA table_info(admin)').fetchall()]
-    if 'email' not in existing_cols:
-        conn.execute('ALTER TABLE admin ADD COLUMN email TEXT DEFAULT ""')
-    conn.commit()
-    conn.close()
+# ── Attendance Engine (singleton) ─────────────────────────────────────────────
+engine = AttendanceEngine(ENCODINGS_PKL, DB_PATH, ATTENDANCE_DIR)
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
 class Admin(UserMixin):
@@ -125,7 +93,6 @@ def load_user(uid):
     return Admin(row['id'], row['username']) if row else None
 
 # ── OTP Helpers ───────────────────────────────────────────────────────────────
-# Email config — fill these in settings or leave blank to use terminal-only mode
 EMAIL_CONFIG = {
     'smtp_server': 'smtp.gmail.com',
     'smtp_port'  : 587,
@@ -139,7 +106,6 @@ def generate_otp(length=6):
 def save_otp(username, otp):
     expires = datetime.now() + timedelta(minutes=10)
     conn    = get_db()
-    # Invalidate old OTPs for this user
     conn.execute('UPDATE otp_tokens SET used=1 WHERE username=?', (username,))
     conn.execute(
         'INSERT INTO otp_tokens (username, otp, expires_at) VALUES (?,?,?)',
@@ -157,7 +123,7 @@ def verify_otp(username, otp):
     if not token:
         conn.close()
         return False, 'Invalid OTP.'
-    if datetime.now() > datetime.fromisoformat(token['expires_at']):
+    if datetime.now() > datetime.fromisoformat(str(token['expires_at'])):
         conn.close()
         return False, 'OTP has expired. Please request a new one.'
     conn.execute('UPDATE otp_tokens SET used=1 WHERE id=?', (token['id'],))
@@ -226,7 +192,7 @@ def logout():
     logout_user()
     return redirect(url_for('login'))
 
-# ── Forgot Password — Step 1: Enter username ──────────────────────────────────
+# ── Forgot Password — Step 1 ─────────────────────────────────────────────────
 @app.route('/forgot-password', methods=['GET', 'POST'])
 def forgot_password():
     if request.method == 'POST':
@@ -242,14 +208,12 @@ def forgot_password():
         otp = generate_otp()
         save_otp(username, otp)
 
-        # Always print to terminal (fallback)
         print(f'\n{"="*45}')
         print(f'  [OTP] PASSWORD RESET OTP for "{username}"')
         print(f'  OTP: {otp}')
         print(f'  Valid for 10 minutes')
         print(f'{"="*45}\n')
 
-        # Try email if admin has one configured
         email_sent = False
         if admin['email']:
             ok, msg = send_otp_email(admin['email'], username, otp)
@@ -266,7 +230,7 @@ def forgot_password():
 
     return render_template('forgot_password.html')
 
-# ── Forgot Password — Step 2: Enter OTP ──────────────────────────────────────
+# ── Forgot Password — Step 2 ─────────────────────────────────────────────────
 @app.route('/verify-otp', methods=['GET', 'POST'])
 def verify_otp_route():
     username = session.get('otp_username')
@@ -283,7 +247,7 @@ def verify_otp_route():
 
     return render_template('verify_otp.html', username=username)
 
-# ── Forgot Password — Step 3: Set new password ───────────────────────────────
+# ── Forgot Password — Step 3 ─────────────────────────────────────────────────
 @app.route('/reset-password', methods=['GET', 'POST'])
 def reset_password_route():
     username = session.get('otp_username')
@@ -395,7 +359,7 @@ def register():
                 engine.add_encoding(student_id, name, enc)
                 encoded += 1
             else:
-                os.remove(img_path)   # remove unusable image
+                os.remove(img_path)
 
         if encoded == 0:
             flash('No face detected in any of the uploaded photos. Try clearer images.', 'danger')
@@ -410,14 +374,14 @@ def register():
             )
             conn.commit()
             conn.close()
-        except sqlite3.IntegrityError:
+        except DBIntegrityError:
             flash(f'Student ID "{student_id}" already exists.', 'danger')
             return redirect(request.url)
 
         flash(f'✅ {name} registered with {encoded}/{saved} usable photo(s).', 'success')
         return redirect(url_for('register'))
 
-    # GET — show existing students too
+    # GET — show existing students
     conn = get_db()
     students = conn.execute('SELECT * FROM students ORDER BY name').fetchall()
     conn.close()
@@ -477,12 +441,10 @@ def report():
 
     conn = get_db()
 
-    # All departments for filter dropdown
     departments = conn.execute(
         "SELECT DISTINCT department FROM students WHERE department != '' ORDER BY department"
     ).fetchall()
 
-    # Attendance records in range
     query = '''
         SELECT a.student_id, a.name, s.department, a.date, a.time, a.status
         FROM attendance a
@@ -497,7 +459,6 @@ def report():
 
     records = conn.execute(query, params).fetchall()
 
-    # Per-student summary (present days in range)
     summary_query = '''
         SELECT a.student_id, a.name, s.department,
                COUNT(DISTINCT a.date) as present_days
@@ -509,10 +470,9 @@ def report():
     if dept_filter:
         summary_query += ' AND s.department = ?'
         s_params.append(dept_filter)
-    summary_query += ' GROUP BY a.student_id ORDER BY a.name'
+    summary_query += ' GROUP BY a.student_id, a.name, s.department ORDER BY a.name'
     summary = conn.execute(summary_query, s_params).fetchall()
 
-    # Total working days in range
     working_days = conn.execute(
         'SELECT COUNT(DISTINCT date) FROM attendance WHERE date BETWEEN ? AND ?',
         [date_from, date_to]
@@ -564,8 +524,6 @@ def export():
     return send_file(buf, mimetype='text/csv',
                      as_attachment=True, download_name=f'{fname}.csv')
 
-# ── Routes: Settings ─────────────────────────────────────────────────────────
-
 # ── Routes: Student Self-Registration (public) ────────────────────────────────
 PENDING_DIR = os.path.join(BASE_DIR, 'pending_photos')
 os.makedirs(PENDING_DIR, exist_ok=True)
@@ -588,7 +546,10 @@ def self_register():
             conn.close()
             flash('This Student ID is already registered.', 'danger')
             return redirect(request.url)
-        if conn.execute("SELECT 1 FROM pending_students WHERE student_id=? AND status=\'pending\'", (student_id,)).fetchone():
+        if conn.execute(
+            "SELECT 1 FROM pending_students WHERE student_id=? AND status=?",
+            (student_id, 'pending')
+        ).fetchone():
             conn.close()
             flash('A request for this Student ID is already pending approval.', 'warning')
             return redirect(request.url)
@@ -614,7 +575,7 @@ def self_register():
             )
             conn.commit()
             flash('Registration submitted! Please wait for admin approval.', 'success')
-        except sqlite3.IntegrityError:
+        except DBIntegrityError:
             flash('A request for this Student ID already exists.', 'warning')
         finally:
             conn.close()
@@ -628,10 +589,12 @@ def self_register():
 def approvals():
     conn    = get_db()
     pending = conn.execute(
-        "SELECT * FROM pending_students WHERE status=\'pending\' ORDER BY submitted_at DESC"
+        "SELECT * FROM pending_students WHERE status=? ORDER BY submitted_at DESC",
+        ('pending',)
     ).fetchall()
     history = conn.execute(
-        "SELECT * FROM pending_students WHERE status != \'pending\' ORDER BY reviewed_at DESC LIMIT 30"
+        "SELECT * FROM pending_students WHERE status != ? ORDER BY reviewed_at DESC LIMIT 30",
+        ('pending',)
     ).fetchall()
     conn.close()
     return render_template('approvals.html', pending=pending, history=history)
@@ -652,11 +615,13 @@ def approve_student(req_id):
             'INSERT INTO students (student_id,name,email,department,phone) VALUES (?,?,?,?,?)',
             (req['student_id'], req['name'], req['email'], req['department'], req['phone'])
         )
-    except sqlite3.IntegrityError:
+    except DBIntegrityError:
         flash('Student ID already exists.', 'danger')
+        if USE_PG:
+            conn.rollback()
         conn.execute(
-            "UPDATE pending_students SET status=\'rejected\',reviewed_at=?,reviewed_by=? WHERE id=?",
-            (datetime.now(), current_user.username, req_id)
+            "UPDATE pending_students SET status=?,reviewed_at=?,reviewed_by=? WHERE id=?",
+            ('rejected', datetime.now(), current_user.username, req_id)
         )
         conn.commit()
         conn.close()
@@ -675,8 +640,8 @@ def approve_student(req_id):
         engine.add_encoding(req['student_id'], req['name'], enc)
 
     conn.execute(
-        "UPDATE pending_students SET status=\'approved\',reviewed_at=?,reviewed_by=? WHERE id=?",
-        (datetime.now(), current_user.username, req_id)
+        "UPDATE pending_students SET status=?,reviewed_at=?,reviewed_by=? WHERE id=?",
+        ('approved', datetime.now(), current_user.username, req_id)
     )
     conn.commit()
     conn.close()
@@ -692,8 +657,8 @@ def reject_student(req_id):
     if req and req['photo_path'] and os.path.exists(req['photo_path']):
         os.remove(req['photo_path'])
     conn.execute(
-        "UPDATE pending_students SET status=\'rejected\',reviewed_at=?,reviewed_by=? WHERE id=?",
-        (datetime.now(), current_user.username, req_id)
+        "UPDATE pending_students SET status=?,reviewed_at=?,reviewed_by=? WHERE id=?",
+        ('rejected', datetime.now(), current_user.username, req_id)
     )
     conn.commit()
     conn.close()
@@ -736,7 +701,7 @@ def add_admin():
         conn.commit()
         conn.close()
         flash(f'✅ Admin "{username}" added successfully!', 'success')
-    except sqlite3.IntegrityError:
+    except DBIntegrityError:
         flash(f'Username "{username}" already exists.', 'danger')
 
     return redirect(url_for('settings'))

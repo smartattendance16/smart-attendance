@@ -1,3 +1,9 @@
+databases:
+  - name: smart-attendance-db
+    plan: free
+    databaseName: smart_attendance
+    user: smart_attendance_user
+
 services:
   - type: web
     name: smart-attendance
@@ -8,3 +14,7 @@ services:
         generateValue: true
       - key: PYTHON_VERSION
         value: 3.11.0
+      - key: DATABASE_URL
+        fromDatabase:
+          name: smart-attendance-db
+          property: connectionString
