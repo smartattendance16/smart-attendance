@@ -6,7 +6,7 @@ databases:
 
 services:
   - type: web
-    name: smart-attendance
+    name: smatten
     runtime: docker
     plan: free
     envVars:
