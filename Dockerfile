@@ -9,13 +9,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libx11-dev \
     libgtk-3-dev \
     libboost-python-dev \
-    libgl1-mesa-glx \
+    libgl1 \
     libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copy requirements first for better Docker cache
+# Force single-threaded compilation to avoid OOM during dlib build
+ENV CMAKE_BUILD_PARALLEL_LEVEL=1
+ENV MAKEFLAGS="-j1"
+
+# Install dlib first (heaviest dependency — needs limited parallelism)
+RUN pip install --no-cache-dir dlib
+
+# Install remaining Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
