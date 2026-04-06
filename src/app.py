@@ -100,9 +100,8 @@ def init_db():
             reviewed_by  TEXT DEFAULT ''
         );
     ''')
-    if not conn.execute("SELECT 1 FROM admin WHERE username='admin'").fetchone():
-        conn.execute("INSERT INTO admin (username,password) VALUES (?,?)",
-                     ('admin', generate_password_hash('admin123')))
+    conn.execute("INSERT OR IGNORE INTO admin (username,password) VALUES (?,?)",
+                 ('admin', generate_password_hash('admin123')))
     conn.commit()
 
     # ── Migrations: add new columns if missing ────────────────────────────────
