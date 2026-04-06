@@ -41,6 +41,10 @@ os.makedirs(ATTENDANCE_DIR, exist_ok=True)
 app = Flask(__name__, template_folder=TEMPLATE_DIR, static_folder=STATIC_DIR)
 app.secret_key = os.environ.get('SECRET_KEY', os.urandom(32).hex())
 
+# Trust reverse proxy headers (Render) so url_for(_external=True) works correctly
+from werkzeug.middleware.proxy_fix import ProxyFix
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 
