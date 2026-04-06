@@ -1,0 +1,161 @@
+{% extends 'base.html' %}
+{% block title %}– Approvals{% endblock %}
+{% block page_title %}Student Approvals{% endblock %}
+
+{% block content %}
+
+<!-- ── Pending Requests ───────────────────────────── -->
+<div class="sa-card mb-4">
+  <div class="sa-card-header">
+    <span class="fw-semibold">
+      <i class="bi bi-hourglass-split text-warning me-2"></i>
+      Pending Requests
+    </span>
+    <span class="badge bg-warning text-dark rounded-pill">{{ pending|length }}</span>
+  </div>
+
+  {% if pending %}
+  <div class="row g-3 p-3">
+    {% for r in pending %}
+    <div class="col-md-6 col-lg-4">
+      <div class="border rounded-3 p-3 h-100" style="border-color:#e2e8f0!important">
+
+        <!-- Photo -->
+        <div class="text-center mb-3">
+          <img src="{{ url_for('static', filename='../pending_photos/' + r.photo_path.split('/')[-1]) }}"
+               onerror="this.src='https://ui-avatars.com/api/?name={{ r.name|urlencode }}&background=4f46e5&color=fff&size=80'"
+               width="80" height="80"
+               class="rounded-circle border"
+               style="object-fit:cover;border-color:#4f46e5!important">
+        </div>
+
+        <!-- Info -->
+        <div class="text-center mb-3">
+          <div class="fw-bold">{{ r.name }}</div>
+          <div class="text-muted small">{{ r.student_id }}</div>
+          {% if r.department %}
+          <div class="badge bg-light text-secondary mt-1">{{ r.department }}</div>
+          {% endif %}
+        </div>
+
+        <table class="table table-sm table-borderless small mb-3">
+          {% if r.email %}
+          <tr>
+            <td class="text-muted">Email</td>
+            <td>{{ r.email }}</td>
+          </tr>
+          {% endif %}
+          {% if r.phone %}
+          <tr>
+            <td class="text-muted">Phone</td>
+            <td>{{ r.phone }}</td>
+          </tr>
+          {% endif %}
+          <tr>
+            <td class="text-muted">Submitted</td>
+            <td>{{ r.submitted_at[:16] }}</td>
+          </tr>
+        </table>
+
+        <!-- Actions -->
+        <div class="d-flex gap-2">
+          <a href="{{ url_for('approve_student', req_id=r.id) }}"
+             class="btn btn-success btn-sm flex-fill"
+             onclick="return confirm('Approve {{ r.name }}?')">
+            <i class="bi bi-check-lg me-1"></i> Approve
+          </a>
+          <a href="{{ url_for('reject_student', req_id=r.id) }}"
+             class="btn btn-outline-danger btn-sm flex-fill"
+             onclick="return confirm('Reject {{ r.name }}? This cannot be undone.')">
+            <i class="bi bi-x-lg me-1"></i> Reject
+          </a>
+        </div>
+
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  {% else %}
+  <div class="text-center text-muted py-5">
+    <i class="bi bi-inbox" style="font-size:2.5rem;"></i>
+    <p class="mt-2 mb-0">No pending requests right now.</p>
+    <p class="small mt-1">
+      Share this link with students:
+      <strong>http://127.0.0.1:5000/self-register</strong>
+    </p>
+  </div>
+  {% endif %}
+</div>
+
+<!-- ── Registration Link ──────────────────────────── -->
+<div class="sa-card mb-4 p-4">
+  <h6 class="fw-semibold mb-2">
+    <i class="bi bi-link-45deg text-primary me-1"></i> Student Registration Link
+  </h6>
+  <p class="small text-muted mb-2">Share this link with students to let them register themselves:</p>
+  <div class="input-group">
+    <input type="text" class="form-control form-control-sm"
+           id="regLink" value="http://127.0.0.1:5000/self-register" readonly>
+    <button class="btn btn-sm btn-outline-primary" onclick="copyLink()">
+      <i class="bi bi-clipboard"></i> Copy
+    </button>
+  </div>
+</div>
+
+<!-- ── History ────────────────────────────────────── -->
+<div class="sa-card">
+  <div class="sa-card-header">
+    <span class="fw-semibold">
+      <i class="bi bi-clock-history me-2"></i> Recent History
+    </span>
+    <span class="text-muted small">Last 30 reviews</span>
+  </div>
+  <div class="table-responsive">
+    <table class="sa-table">
+      <thead>
+        <tr>
+          <th>Student ID</th>
+          <th>Name</th>
+          <th>Department</th>
+          <th>Submitted</th>
+          <th>Status</th>
+          <th>Reviewed By</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in history %}
+        <tr>
+          <td>{{ r.student_id }}</td>
+          <td class="fw-semibold">{{ r.name }}</td>
+          <td>{{ r.department or '—' }}</td>
+          <td>{{ r.submitted_at[:10] }}</td>
+          <td>
+            {% if r.status == 'approved' %}
+              <span class="badge-present">✅ Approved</span>
+            {% else %}
+              <span class="badge-absent">❌ Rejected</span>
+            {% endif %}
+          </td>
+          <td>{{ r.reviewed_by or '—' }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="empty-row">No history yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  function copyLink() {
+    const input = document.getElementById('regLink');
+    navigator.clipboard.writeText(input.value).then(() => {
+      alert('Link copied to clipboard!');
+    });
+  }
+</script>
+{% endblock %}

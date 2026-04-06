@@ -1,0 +1,98 @@
+{% extends 'base.html' %}
+{% block title %}– Dashboard{% endblock %}
+{% block page_title %}Dashboard{% endblock %}
+
+{% block content %}
+
+<!-- ── Stat row ───────────────────────────────────── -->
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-3">
+    <div class="stat-card" style="--icon-bg:#ede9fe;--icon-color:#7c3aed">
+      <div class="stat-icon"><i class="bi bi-people-fill"></i></div>
+      <div>
+        <div class="stat-label">Total Students</div>
+        <div class="stat-value">{{ total_students }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="stat-card" style="--icon-bg:#dcfce7;--icon-color:#16a34a">
+      <div class="stat-icon"><i class="bi bi-person-check-fill"></i></div>
+      <div>
+        <div class="stat-label">Present Today</div>
+        <div class="stat-value">{{ today_present }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="stat-card" style="--icon-bg:#fee2e2;--icon-color:#dc2626">
+      <div class="stat-icon"><i class="bi bi-person-x-fill"></i></div>
+      <div>
+        <div class="stat-label">Absent Today</div>
+        <div class="stat-value">{{ today_absent }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="stat-card" style="--icon-bg:#dbeafe;--icon-color:#2563eb">
+      <div class="stat-icon"><i class="bi bi-calendar-date"></i></div>
+      <div>
+        <div class="stat-label">Date</div>
+        <div class="stat-value" style="font-size:1rem">{{ today }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Quick actions ──────────────────────────────── -->
+<div class="row g-3 mb-4">
+  <div class="col-md-4">
+    <a href="{{ url_for('camera') }}" class="btn btn-primary w-100 py-3 fw-semibold">
+      <i class="bi bi-camera-fill me-2"></i>Start Camera
+    </a>
+  </div>
+  <div class="col-md-4">
+    <a href="{{ url_for('register') }}" class="btn btn-outline-primary w-100 py-3 fw-semibold">
+      <i class="bi bi-person-plus-fill me-2"></i>Register Student
+    </a>
+  </div>
+  <div class="col-md-4">
+    <a href="{{ url_for('export') }}?date_from={{ today }}&date_to={{ today }}&format=excel"
+       class="btn btn-outline-success w-100 py-3 fw-semibold">
+      <i class="bi bi-file-earmark-excel me-2"></i>Export Today
+    </a>
+  </div>
+</div>
+
+<!-- ── Recent attendance table ────────────────────── -->
+<div class="sa-card">
+  <div class="sa-card-header">
+    <span class="fw-semibold">Recent Activity</span>
+    <a href="{{ url_for('report') }}" class="btn btn-sm btn-outline-primary">View All</a>
+  </div>
+  <div class="table-responsive">
+    <table class="sa-table">
+      <thead>
+        <tr>
+          <th>Student ID</th><th>Name</th><th>Department</th>
+          <th>Date</th><th>Time</th><th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in recent %}
+        <tr>
+          <td>{{ r.student_id }}</td>
+          <td class="fw-semibold">{{ r.name }}</td>
+          <td>{{ r.department or '—' }}</td>
+          <td>{{ r.date }}</td>
+          <td>{{ r.time }}</td>
+          <td><span class="badge-present">{{ r.status }}</span></td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="empty-row">No records yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

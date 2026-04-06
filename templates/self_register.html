@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>SmartAttend – Student Registration</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"/>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css"/>
+  <style>
+    body {
+      background: linear-gradient(135deg, #1e1b4b 0%, #4f46e5 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem 1rem;
+    }
+    .reg-card {
+      background: #fff;
+      border-radius: 20px;
+      padding: 2.5rem 2rem;
+      width: 100%;
+      max-width: 480px;
+      box-shadow: 0 25px 60px rgba(0,0,0,.25);
+    }
+    .reg-logo { font-size: 2.5rem; color: #4f46e5; text-align: center; }
+    .reg-title { font-size: 1.4rem; font-weight: 700; text-align: center; color: #0f172a; }
+    .reg-sub   { text-align: center; color: #64748b; font-size: .85rem; margin-bottom: 1.5rem; }
+
+    .step-badge {
+      background: #4f46e5; color: #fff;
+      border-radius: 50%; width: 24px; height: 24px;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: .75rem; font-weight: 700; margin-right: .4rem;
+    }
+    .photo-drop {
+      border: 2px dashed #c7d2fe;
+      border-radius: 12px;
+      padding: 1.5rem;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color .2s, background .2s;
+    }
+    .photo-drop:hover { border-color: #4f46e5; background: #f5f3ff; }
+    .photo-drop i { font-size: 2rem; color: #a5b4fc; }
+
+    #preview {
+      width: 100px; height: 100px;
+      border-radius: 50%;
+      object-fit: cover;
+      border: 3px solid #4f46e5;
+      display: none;
+      margin: 0 auto .5rem;
+    }
+    .btn-submit {
+      background: linear-gradient(90deg, #4f46e5, #7c3aed);
+      color: #fff; border: none; border-radius: 10px;
+      padding: .75rem; font-weight: 600; width: 100%;
+      font-size: .95rem; cursor: pointer; transition: opacity .2s;
+    }
+    .btn-submit:hover { opacity: .88; }
+    .admin-link {
+      text-align: center; font-size: .82rem;
+      color: #94a3b8; margin-top: 1rem;
+    }
+    .admin-link a { color: #4f46e5; text-decoration: none; }
+  </style>
+</head>
+<body>
+<div class="reg-card">
+
+  <div class="reg-logo"><i class="bi bi-person-badge-fill"></i></div>
+  <div class="reg-title mt-2">Student Registration</div>
+  <p class="reg-sub">Fill in your details. An admin will review and approve your request.</p>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for cat, msg in messages %}
+    <div class="alert alert-{{ cat }} py-2 small text-center">{{ msg }}</div>
+    {% endfor %}
+  {% endwith %}
+
+  <form method="POST" enctype="multipart/form-data">
+
+    <!-- Step 1 — Details -->
+    <p class="small fw-semibold text-secondary mb-2">
+      <span class="step-badge">1</span> Your Details
+    </p>
+
+    <div class="mb-3">
+      <label class="form-label small fw-semibold">Student ID <span class="text-danger">*</span></label>
+      <input type="text" name="student_id" class="form-control"
+             placeholder="e.g. STU001" required>
+    </div>
+    <div class="mb-3">
+      <label class="form-label small fw-semibold">Full Name <span class="text-danger">*</span></label>
+      <input type="text" name="name" class="form-control"
+             placeholder="e.g. Ravi Kumar" required>
+    </div>
+    <div class="row g-2 mb-3">
+      <div class="col">
+        <label class="form-label small fw-semibold">Department</label>
+        <input type="text" name="department" class="form-control" placeholder="CSE, ECE…">
+      </div>
+      <div class="col">
+        <label class="form-label small fw-semibold">Phone</label>
+        <input type="text" name="phone" class="form-control" placeholder="Optional">
+      </div>
+    </div>
+    <div class="mb-4">
+      <label class="form-label small fw-semibold">Email</label>
+      <input type="email" name="email" class="form-control" placeholder="Optional">
+    </div>
+
+    <!-- Step 2 — Photo -->
+    <p class="small fw-semibold text-secondary mb-2">
+      <span class="step-badge">2</span> Face Photo
+    </p>
+
+    <img id="preview" src="" alt="Preview">
+    <div class="photo-drop mb-1" onclick="document.getElementById('photoInput').click()">
+      <i class="bi bi-camera-fill d-block mb-2"></i>
+      <p class="mb-0 small text-secondary">Click to upload a clear, front-facing photo</p>
+      <p class="mb-0" style="font-size:.75rem;color:#a5b4fc">JPG, PNG supported</p>
+    </div>
+    <input type="file" name="face_image" id="photoInput"
+           accept="image/*" required style="display:none">
+    <div class="form-text mb-4">
+      <i class="bi bi-info-circle me-1"></i>
+      Make sure your face is clearly visible with good lighting.
+    </div>
+
+    <button type="submit" class="btn-submit">
+      <i class="bi bi-send me-2"></i>Submit Registration
+    </button>
+  </form>
+
+  <div class="admin-link">
+    Admin? <a href="{{ url_for('login') }}">Login here</a>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+  document.getElementById('photoInput').addEventListener('change', function () {
+    const file = this.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = e => {
+      const img = document.getElementById('preview');
+      img.src = e.target.result;
+      img.style.display = 'block';
+    };
+    reader.readAsDataURL(file);
+  });
+</script>
+</body>
+</html>

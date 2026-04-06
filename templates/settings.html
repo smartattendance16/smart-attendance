@@ -1,0 +1,182 @@
+{% extends 'base.html' %}
+{% block title %}– Settings{% endblock %}
+{% block page_title %}Settings{% endblock %}
+
+{% block content %}
+<div class="row g-4">
+
+  <!-- ── Add new admin ─────────────────────────────── -->
+  <div class="col-lg-5">
+    <div class="sa-card p-4">
+      <h6 class="fw-semibold mb-4">
+        <i class="bi bi-person-plus-fill text-primary me-2"></i>Add New Admin
+      </h6>
+
+      <form method="POST" action="{{ url_for('add_admin') }}" autocomplete="off">
+        <div class="mb-3">
+          <label class="form-label small fw-semibold">Username <span class="text-danger">*</span></label>
+          <input type="text" name="username" class="form-control"
+                 placeholder="e.g. teacher1" required>
+        </div>
+        <div class="mb-3">
+          <label class="form-label small fw-semibold">Email <span class="text-muted">(for OTP reset)</span></label>
+          <input type="email" name="email" class="form-control"
+                 placeholder="admin@example.com">
+        </div>
+        <div class="mb-3">
+          <label class="form-label small fw-semibold">Password <span class="text-danger">*</span></label>
+          <div class="input-group">
+            <input type="password" name="password" class="form-control"
+                   placeholder="Min. 6 characters" required id="pw1">
+            <button class="btn btn-outline-secondary" type="button"
+                    onclick="togglePw('pw1', this)">
+              <i class="bi bi-eye"></i>
+            </button>
+          </div>
+        </div>
+        <div class="mb-4">
+          <label class="form-label small fw-semibold">Confirm Password <span class="text-danger">*</span></label>
+          <div class="input-group">
+            <input type="password" name="confirm_password" class="form-control"
+                   placeholder="Repeat password" required id="pw2">
+            <button class="btn btn-outline-secondary" type="button"
+                    onclick="togglePw('pw2', this)">
+              <i class="bi bi-eye"></i>
+            </button>
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary w-100 py-2 fw-semibold">
+          <i class="bi bi-person-check me-1"></i> Add Admin
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- ── Admin list ────────────────────────────────── -->
+  <div class="col-lg-7">
+    <div class="sa-card">
+      <div class="sa-card-header">
+        <span class="fw-semibold">
+          <i class="bi bi-shield-lock-fill text-primary me-2"></i>
+          Admin Accounts ({{ admins|length }})
+        </span>
+      </div>
+
+      <div class="table-responsive">
+        <table class="sa-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Username</th>
+              <th>Role</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for a in admins %}
+            <tr>
+              <td>{{ a.id }}</td>
+              <td class="fw-semibold">
+                {{ a.username }}
+                {% if a.id == current_user.id %}
+                  <span class="badge bg-primary ms-1" style="font-size:.7rem">You</span>
+                {% endif %}
+              </td>
+              <td><span class="badge-present">Admin</span></td>
+              <td>
+                <div class="d-flex gap-2">
+                  <!-- Reset password button -->
+                  <button class="btn btn-sm btn-outline-secondary"
+                          data-bs-toggle="modal"
+                          data-bs-target="#resetModal{{ a.id }}">
+                    <i class="bi bi-key"></i> Reset
+                  </button>
+
+                  <!-- Delete button (disabled for own account & last admin) -->
+                  {% if a.id != current_user.id and admins|length > 1 %}
+                  <a href="{{ url_for('delete_admin', admin_id=a.id) }}"
+                     class="btn btn-sm btn-outline-danger"
+                     onclick="return confirm('Delete admin {{ a.username }}?')">
+                    <i class="bi bi-trash"></i>
+                  </a>
+                  {% else %}
+                  <button class="btn btn-sm btn-outline-danger" disabled title="Cannot delete">
+                    <i class="bi bi-trash"></i>
+                  </button>
+                  {% endif %}
+                </div>
+              </td>
+            </tr>
+
+            <!-- Reset Password Modal for each admin -->
+            <div class="modal fade" id="resetModal{{ a.id }}" tabindex="-1">
+              <div class="modal-dialog modal-sm">
+                <div class="modal-content">
+                  <div class="modal-header border-0 pb-0">
+                    <h6 class="modal-title fw-semibold">
+                      Reset Password — {{ a.username }}
+                    </h6>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                  </div>
+                  <form method="POST"
+                        action="{{ url_for('reset_admin_password', admin_id=a.id) }}"
+                        autocomplete="off">
+                    <div class="modal-body">
+                      <div class="mb-3">
+                        <label class="form-label small">New Password</label>
+                        <input type="password" name="new_password"
+                               class="form-control form-control-sm"
+                               placeholder="Min. 6 characters" required>
+                      </div>
+                      <div class="mb-1">
+                        <label class="form-label small">Confirm Password</label>
+                        <input type="password" name="confirm_password"
+                               class="form-control form-control-sm"
+                               placeholder="Repeat password" required>
+                      </div>
+                    </div>
+                    <div class="modal-footer border-0 pt-0">
+                      <button class="btn btn-primary btn-sm px-4">Reset</button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            </div>
+
+            {% else %}
+            <tr><td colspan="4" class="empty-row">No admins found.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Info box -->
+    <div class="sa-card p-4 mt-3">
+      <h6 class="fw-semibold mb-3">
+        <i class="bi bi-info-circle-fill text-primary me-2"></i>Notes
+      </h6>
+      <ul class="small text-secondary mb-0" style="line-height:2.1">
+        <li>All admins have <strong>full access</strong> to the system.</li>
+        <li>You <strong>cannot delete your own account</strong>.</li>
+        <li>At least <strong>one admin</strong> must exist at all times.</li>
+        <li>Share login credentials securely with new admins.</li>
+      </ul>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  function togglePw(id, btn) {
+    const input = document.getElementById(id);
+    const isText = input.type === 'text';
+    input.type = isText ? 'password' : 'text';
+    btn.innerHTML = isText
+      ? '<i class="bi bi-eye"></i>'
+      : '<i class="bi bi-eye-slash"></i>';
+  }
+</script>
+{% endblock %}

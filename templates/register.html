@@ -1,0 +1,132 @@
+{% extends 'base.html' %}
+{% block title %}– Register Student{% endblock %}
+{% block page_title %}Register Student{% endblock %}
+
+{% block content %}
+<div class="row g-4">
+
+  <!-- ── Registration form ─────────────────────────── -->
+  <div class="col-lg-5">
+    <div class="sa-card p-4">
+      <h6 class="fw-semibold mb-4">
+        <i class="bi bi-person-plus-fill text-primary me-2"></i>New Student
+      </h6>
+
+      <form method="POST" enctype="multipart/form-data" id="regForm">
+        <div class="mb-3">
+          <label class="form-label small fw-semibold">Student ID <span class="text-danger">*</span></label>
+          <input type="text" name="student_id" class="form-control"
+                 placeholder="e.g. STU001" required>
+        </div>
+        <div class="mb-3">
+          <label class="form-label small fw-semibold">Full Name <span class="text-danger">*</span></label>
+          <input type="text" name="name" class="form-control"
+                 placeholder="e.g. Ravi Kumar" required>
+        </div>
+        <div class="row g-2 mb-3">
+          <div class="col">
+            <label class="form-label small fw-semibold">Department</label>
+            <input type="text" name="department" class="form-control" placeholder="CSE, ECE…">
+          </div>
+          <div class="col">
+            <label class="form-label small fw-semibold">Phone</label>
+            <input type="text" name="phone" class="form-control" placeholder="Optional">
+          </div>
+        </div>
+        <div class="mb-4">
+          <label class="form-label small fw-semibold">Email</label>
+          <input type="email" name="email" class="form-control" placeholder="Optional">
+        </div>
+
+        <!-- Photo upload -->
+        <div class="mb-4">
+          <label class="form-label small fw-semibold">
+            Face Photo(s) <span class="text-danger">*</span>
+          </label>
+          <input type="file" name="face_images" class="form-control"
+                 accept="image/*" multiple required id="photoInput">
+          <div class="form-text">
+            Upload 1–5 clear front-facing photos for better accuracy.
+          </div>
+          <!-- Thumbnails preview -->
+          <div id="thumbRow" class="d-flex flex-wrap gap-2 mt-3"></div>
+        </div>
+
+        <button type="submit" class="btn btn-primary w-100 py-2 fw-semibold">
+          <i class="bi bi-person-check me-1"></i> Register Student
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- ── Student list ───────────────────────────────── -->
+  <div class="col-lg-7">
+    <div class="sa-card">
+      <div class="sa-card-header">
+        <span class="fw-semibold">Registered Students ({{ students|length }})</span>
+        <input type="text" id="searchInput" class="form-control form-control-sm"
+               style="width:180px" placeholder="🔍  Search…"
+               onkeyup="filterTable()">
+      </div>
+      <div class="table-responsive" style="max-height:520px;overflow-y:auto">
+        <table class="sa-table" id="stuTable">
+          <thead>
+            <tr>
+              <th>ID</th><th>Name</th><th>Dept</th><th>Registered</th><th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for s in students %}
+            <tr>
+              <td>{{ s.student_id }}</td>
+              <td class="fw-semibold">{{ s.name }}</td>
+              <td>{{ s.department or '—' }}</td>
+              <td>{{ s.created_at[:10] }}</td>
+              <td>
+                <a href="{{ url_for('delete_student', student_id=s.student_id) }}"
+                   class="btn btn-sm btn-outline-danger"
+                   onclick="return confirm('Delete {{ s.name }}? This cannot be undone.')">
+                  <i class="bi bi-trash"></i>
+                </a>
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="5" class="empty-row">No students registered yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // Photo thumbnails
+  document.getElementById('photoInput').addEventListener('change', function () {
+    const row = document.getElementById('thumbRow');
+    row.innerHTML = '';
+    Array.from(this.files).slice(0, 5).forEach(file => {
+      const reader = new FileReader();
+      reader.onload = e => {
+        const img = document.createElement('img');
+        img.src    = e.target.result;
+        img.style  = 'width:64px;height:64px;object-fit:cover;border-radius:8px;border:2px solid #4f46e5';
+        row.appendChild(img);
+      };
+      reader.readAsDataURL(file);
+    });
+  });
+
+  // Search filter
+  function filterTable() {
+    const q    = document.getElementById('searchInput').value.toLowerCase();
+    const rows = document.querySelectorAll('#stuTable tbody tr');
+    rows.forEach(r => {
+      r.style.display = r.textContent.toLowerCase().includes(q) ? '' : 'none';
+    });
+  }
+</script>
+{% endblock %}

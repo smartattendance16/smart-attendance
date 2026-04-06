@@ -1,0 +1,190 @@
+{% extends 'base.html' %}
+{% block title %}– Reports{% endblock %}
+{% block page_title %}Attendance Reports{% endblock %}
+
+{% block content %}
+
+<!-- ── Filter bar ─────────────────────────────────── -->
+<div class="sa-card p-3 mb-4">
+  <form class="row g-2 align-items-end" method="GET">
+    <div class="col-auto">
+      <label class="form-label small fw-semibold mb-1">From</label>
+      <input type="date" name="date_from" class="form-control form-control-sm"
+             value="{{ date_from }}">
+    </div>
+    <div class="col-auto">
+      <label class="form-label small fw-semibold mb-1">To</label>
+      <input type="date" name="date_to" class="form-control form-control-sm"
+             value="{{ date_to }}">
+    </div>
+    <div class="col-auto">
+      <label class="form-label small fw-semibold mb-1">Department</label>
+      <select name="department" class="form-select form-select-sm" style="min-width:130px">
+        <option value="">All</option>
+        {% for d in departments %}
+        <option value="{{ d.department }}"
+                {{ 'selected' if d.department == dept_filter }}>
+          {{ d.department }}
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-auto">
+      <button type="submit" class="btn btn-primary btn-sm">
+        <i class="bi bi-funnel"></i> Filter
+      </button>
+    </div>
+    <div class="col-auto ms-auto d-flex gap-2">
+      <a href="{{ url_for('export') }}?date_from={{ date_from }}&date_to={{ date_to }}&format=csv"
+         class="btn btn-sm btn-outline-secondary">
+        <i class="bi bi-filetype-csv"></i> CSV
+      </a>
+      <a href="{{ url_for('export') }}?date_from={{ date_from }}&date_to={{ date_to }}&format=excel"
+         class="btn btn-sm btn-success">
+        <i class="bi bi-file-earmark-excel"></i> Excel
+      </a>
+    </div>
+  </form>
+</div>
+
+<!-- ── Summary cards (per student) ───────────────── -->
+<div class="sa-card mb-4">
+  <div class="sa-card-header">
+    <span class="fw-semibold">Student Summary</span>
+    <span class="text-muted small">
+      {{ date_from }} → {{ date_to }}
+      &nbsp;|&nbsp; {{ working_days }} working day(s)
+    </span>
+  </div>
+  <div class="table-responsive">
+    <table class="sa-table">
+      <thead>
+        <tr>
+          <th>Student ID</th>
+          <th>Name</th>
+          <th>Department</th>
+          <th>Present Days</th>
+          <th>Absent Days</th>
+          <th>Attendance %</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in summary %}
+        {% set pct = ((s.present_days / working_days * 100) | round(1)) if working_days > 0 else 0 %}
+        <tr>
+          <td>{{ s.student_id }}</td>
+          <td class="fw-semibold">{{ s.name }}</td>
+          <td>{{ s.department or '—' }}</td>
+          <td>
+            <span class="badge-present">{{ s.present_days }}</span>
+          </td>
+          <td>
+            {% set absent = working_days - s.present_days %}
+            {% if absent > 0 %}
+              <span class="badge-absent">{{ absent }}</span>
+            {% else %}
+              <span class="badge-present">0</span>
+            {% endif %}
+          </td>
+          <td>
+            <div class="d-flex align-items-center gap-2">
+              <div class="progress flex-grow-1" style="height:6px;min-width:80px">
+                <div class="progress-bar
+                            {{ 'bg-success' if pct >= 75 else 'bg-warning' if pct >= 50 else 'bg-danger' }}"
+                     style="width:{{ pct }}%"></div>
+              </div>
+              <span class="small fw-semibold">{{ pct }}%</span>
+            </div>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="empty-row">No data for this period.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ── Day-wise records ───────────────────────────── -->
+<div class="sa-card">
+  <div class="sa-card-header">
+    <span class="fw-semibold">Detailed Records</span>
+    <span class="badge bg-primary rounded-pill">{{ records|length }} entries</span>
+  </div>
+
+  <!-- Tab toggle: group by date vs flat list -->
+  <div class="px-4 pt-3 pb-0 d-flex gap-2 border-bottom mb-0">
+    <button class="btn btn-sm btn-primary mb-2" onclick="showView('flat')"   id="btnFlat">Flat List</button>
+    <button class="btn btn-sm btn-outline-primary mb-2" onclick="showView('grouped')" id="btnGrouped">By Date</button>
+  </div>
+
+  <!-- Flat view -->
+  <div id="viewFlat" class="table-responsive">
+    <table class="sa-table">
+      <thead>
+        <tr>
+          <th>Date</th><th>Student ID</th><th>Name</th>
+          <th>Department</th><th>Time In</th><th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in records %}
+        <tr>
+          <td>{{ r.date }}</td>
+          <td>{{ r.student_id }}</td>
+          <td class="fw-semibold">{{ r.name }}</td>
+          <td>{{ r.department or '—' }}</td>
+          <td>{{ r.time }}</td>
+          <td><span class="badge-present">{{ r.status }}</span></td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="empty-row">No records for selected range.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Grouped view (built via JS) -->
+  <div id="viewGrouped" style="display:none">
+    {% set ns = namespace(current_date='') %}
+    {% for r in records %}
+      {% if r.date != ns.current_date %}
+        {% if ns.current_date != '' %}</tbody></table></div>{% endif %}
+        {% set ns.current_date = r.date %}
+        <div class="px-4 pt-3">
+          <div class="fw-semibold mb-2 text-primary">
+            <i class="bi bi-calendar3 me-1"></i>{{ r.date }}
+          </div>
+          <div class="table-responsive">
+          <table class="sa-table">
+            <thead>
+              <tr><th>Student ID</th><th>Name</th><th>Dept</th><th>Time In</th><th>Status</th></tr>
+            </thead>
+            <tbody>
+      {% endif %}
+          <tr>
+            <td>{{ r.student_id }}</td>
+            <td class="fw-semibold">{{ r.name }}</td>
+            <td>{{ r.department or '—' }}</td>
+            <td>{{ r.time }}</td>
+            <td><span class="badge-present">{{ r.status }}</span></td>
+          </tr>
+    {% else %}
+      <p class="text-center text-muted py-4">No records.</p>
+    {% endfor %}
+    {% if ns.current_date != '' %}</tbody></table></div>{% endif %}
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  function showView(v) {
+    document.getElementById('viewFlat').style.display    = (v === 'flat')    ? '' : 'none';
+    document.getElementById('viewGrouped').style.display = (v === 'grouped') ? '' : 'none';
+    document.getElementById('btnFlat').className    = 'btn btn-sm mb-2 ' + (v === 'flat'    ? 'btn-primary' : 'btn-outline-primary');
+    document.getElementById('btnGrouped').className = 'btn btn-sm mb-2 ' + (v === 'grouped' ? 'btn-primary' : 'btn-outline-primary');
+  }
+</script>
+{% endblock %}
