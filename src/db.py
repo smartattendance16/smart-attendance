@@ -57,6 +57,62 @@ def get_db(db_path=None):
     return conn
 
 
+def _seed_production_data(conn):
+    """
+    Seed the production (PostgreSQL) database with data from local development.
+    Uses ON CONFLICT DO NOTHING so it's safe to run multiple times.
+    """
+    from werkzeug.security import generate_password_hash
+
+    # ── Admins ────────────────────────────────────────────────────────────
+    admins = [
+        ('admin',         'admin123',       'smartattendance16@gmail.com'),
+        ('Deepika',       'Deepika@123',    ''),
+        ('Naresh M',      'Naresh@123',     ''),
+        ('nandaprakash',  'nanda@123',      'nandaprakashreddy@gmail.com'),
+    ]
+    for username, password, email in admins:
+        conn.execute(
+            "INSERT INTO admin (username, password, email) VALUES (?, ?, ?) "
+            "ON CONFLICT (username) DO NOTHING",
+            (username, generate_password_hash(password), email),
+        )
+
+    # ── Students ──────────────────────────────────────────────────────────
+    students = [
+        ('24b81a05v1', 'Nandaprakash Reddy', 'nandaprakashreddy@gmail.com', 'CSE', '6305935317'),
+        ('24B81A05V0', 'Nagesh',             '24b81a05v0@cvr.ac.in',       'CSE', ''),
+    ]
+    for sid, name, email, dept, phone in students:
+        conn.execute(
+            "INSERT INTO students (student_id, name, email, department, phone) "
+            "VALUES (?, ?, ?, ?, ?) ON CONFLICT (student_id) DO NOTHING",
+            (sid, name, email, dept, phone),
+        )
+
+    # ── Attendance Records ────────────────────────────────────────────────
+    attendance = [
+        ('24b81a05v1', 'Nandaprakash Reddy', '2026-04-05', '19:23:34', 'Present'),
+        ('24b81a05v1', 'Nandaprakash Reddy', '2026-04-06', '21:07:44', 'Present'),
+        ('24b81a05v1', 'Nandaprakash Reddy', '2026-04-07', '11:10:28', 'Present'),
+        ('24B81A05V0', 'Nagesh',             '2026-04-07', '14:14:23', 'Present'),
+    ]
+    # Avoid duplicates by checking existing records
+    for sid, name, dt, tm, status in attendance:
+        existing = conn.execute(
+            "SELECT 1 FROM attendance WHERE student_id=? AND date=? AND time=?",
+            (sid, dt, tm),
+        ).fetchone()
+        if not existing:
+            conn.execute(
+                "INSERT INTO attendance (student_id, name, date, time, status) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (sid, name, dt, tm, status),
+            )
+
+    conn.commit()
+
+
 def init_db(db_path=None):
     """Create tables + seed default admin."""
     from werkzeug.security import generate_password_hash
@@ -110,11 +166,10 @@ def init_db(db_path=None):
                 encoding   BYTEA NOT NULL)''',
         ]:
             conn.execute(stmt)
-        conn.execute(
-            "INSERT INTO admin (username, password) VALUES (?, ?) "
-            "ON CONFLICT (username) DO NOTHING",
-            ('admin', generate_password_hash('admin123')),
-        )
+
+        # Seed all local data into production
+        _seed_production_data(conn)
+
     else:
         conn.executescript('''
             CREATE TABLE IF NOT EXISTS admin (
