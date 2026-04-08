@@ -18,3 +18,7 @@ services:
         fromDatabase:
           name: smart-attendance-db
           property: connectionString
+      - key: SMTP_EMAIL
+        value: smartattendance16@gmail.com
+      - key: SMTP_PASSWORD
+        sync: false  # Set manually in Render dashboard

@@ -8,19 +8,26 @@ import io
 import random
 import string
 import smtplib
+import logging
+import threading
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import date, datetime, timedelta
 
 import pandas as pd
 from flask import (Flask, Response, flash, redirect, render_template,
-                   request, send_file, url_for, session)
+                   request, send_file, url_for, session, jsonify)
 from flask_login import (LoginManager, UserMixin, current_user, login_required,
                          login_user, logout_user)
+from flask_wtf.csrf import CSRFProtect
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from db import get_db as _raw_get_db, init_db as _raw_init_db, DBIntegrityError, USE_PG
 from attendance_engine import AttendanceEngine
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
+logger = logging.getLogger('smartattend')
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 SRC_DIR       = os.path.dirname(os.path.abspath(__file__))
@@ -40,6 +47,19 @@ os.makedirs(ATTENDANCE_DIR, exist_ok=True)
 # ── Flask app ─────────────────────────────────────────────────────────────────
 app = Flask(__name__, template_folder=TEMPLATE_DIR, static_folder=STATIC_DIR)
 app.secret_key = os.environ.get('SECRET_KEY', os.urandom(32).hex())
+
+# CSRF Protection
+csrf = CSRFProtect(app)
+
+# Rate Limiting
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+limiter = Limiter(
+    get_remote_address,
+    app=app,
+    default_limits=[],
+    storage_uri='memory://',
+)
 
 # Trust reverse proxy headers (Render) so url_for(_external=True) works correctly
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -80,6 +100,21 @@ def get_db():
 def init_db():
     _raw_init_db(DB_PATH)
 
+# ── Audit Log Helper ──────────────────────────────────────────────────────────
+def log_action(action, target='', details=''):
+    """Record an admin action in the audit log."""
+    user = current_user.username if current_user.is_authenticated else 'system'
+    try:
+        conn = get_db()
+        conn.execute(
+            'INSERT INTO audit_log (admin_user, action, target, details) VALUES (?,?,?,?)',
+            (user, action, target, details)
+        )
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass  # Don't let audit logging break the main flow
+
 # ── Attendance Engine (singleton) ─────────────────────────────────────────────
 engine = AttendanceEngine(ENCODINGS_PKL, DB_PATH, ATTENDANCE_DIR)
 
@@ -98,10 +133,10 @@ def load_user(uid):
 
 # ── OTP Helpers ───────────────────────────────────────────────────────────────
 EMAIL_CONFIG = {
-    'smtp_server': 'smtp.gmail.com',
-    'smtp_port'  : 587,
-    'sender'     : 'smartattendance16@gmail.com',
-    'password'   : 'fmfn ytym fqlp sgmt',
+    'smtp_server': os.environ.get('SMTP_SERVER', 'smtp.gmail.com'),
+    'smtp_port'  : int(os.environ.get('SMTP_PORT', 587)),
+    'sender'     : os.environ.get('SMTP_EMAIL', 'smartattendance16@gmail.com'),
+    'password'   : os.environ.get('SMTP_PASSWORD', ''),
 }
 
 def generate_otp(length=6):
@@ -135,10 +170,8 @@ def verify_otp(username, otp):
     conn.close()
     return True, 'OK'
 
-def send_otp_email(to_email, username, otp):
-    """Send OTP email. Returns (success, message)."""
-    if not EMAIL_CONFIG['sender'] or not EMAIL_CONFIG['password']:
-        return False, 'Email not configured'
+def _send_otp_email_sync(to_email, username, otp):
+    """Actual SMTP send (runs in background thread)."""
     try:
         msg            = MIMEMultipart('alternative')
         msg['Subject'] = 'SmartAttend — Password Reset OTP'
@@ -162,13 +195,20 @@ def send_otp_email(to_email, username, otp):
           </div>
         </div>"""
         msg.attach(MIMEText(html, 'html'))
-        with smtplib.SMTP(EMAIL_CONFIG['smtp_server'], EMAIL_CONFIG['smtp_port']) as s:
+        with smtplib.SMTP(EMAIL_CONFIG['smtp_server'], EMAIL_CONFIG['smtp_port'], timeout=10) as s:
             s.starttls()
             s.login(EMAIL_CONFIG['sender'], EMAIL_CONFIG['password'])
             s.sendmail(EMAIL_CONFIG['sender'], to_email, msg.as_string())
-        return True, 'Email sent'
+        logger.info(f'OTP email sent to {to_email}')
     except Exception as e:
-        return False, str(e)
+        logger.error(f'OTP email to {to_email} failed: {e}')
+
+def send_otp_email_async(to_email, username, otp):
+    """Fire-and-forget: sends OTP email in a background thread."""
+    if not EMAIL_CONFIG['sender'] or not EMAIL_CONFIG['password']:
+        return
+    t = threading.Thread(target=_send_otp_email_sync, args=(to_email, username, otp), daemon=True)
+    t.start()
 
 # ── Routes: Auth ──────────────────────────────────────────────────────────────
 @app.route('/')
@@ -176,6 +216,7 @@ def index():
     return redirect(url_for('dashboard') if current_user.is_authenticated else url_for('login'))
 
 @app.route('/login', methods=['GET', 'POST'])
+@limiter.limit('10 per minute')
 def login():
     if request.method == 'POST':
         username = request.form['username']
@@ -185,7 +226,9 @@ def login():
         conn.close()
         if row and check_password_hash(row['password'], password):
             login_user(Admin(row['id'], row['username']))
+            log_action('login', username, 'Successful login')
             return redirect(url_for('dashboard'))
+        logger.warning(f'Failed login attempt for username: {username}')
         flash('Invalid username or password.', 'danger')
     return render_template('login.html')
 
@@ -198,6 +241,7 @@ def logout():
 
 # ── Forgot Password — Step 1 ─────────────────────────────────────────────────
 @app.route('/forgot-password', methods=['GET', 'POST'])
+@limiter.limit('5 per minute')
 def forgot_password():
     if request.method == 'POST':
         username = request.form['username'].strip()
@@ -218,14 +262,9 @@ def forgot_password():
         print(f'  Valid for 10 minutes')
         print(f'{"="*45}\n')
 
-        email_sent = False
         if admin['email']:
-            ok, msg = send_otp_email(admin['email'], username, otp)
-            if ok:
-                email_sent = True
-                flash(f'OTP sent to {admin["email"][:3]}***. Check your email.', 'success')
-            else:
-                flash(f'Email failed ({msg}). Check the terminal for your OTP.', 'warning')
+            send_otp_email_async(admin['email'], username, otp)
+            flash(f'OTP sent to {admin["email"][:3]}***. Check your email.', 'success')
         else:
             flash('OTP generated! Check the terminal window where the app is running.', 'info')
 
@@ -320,6 +359,31 @@ def dashboard():
     departments      = conn.execute(
         "SELECT department, COUNT(*) as cnt FROM students WHERE department != '' GROUP BY department"
     ).fetchall()
+
+    # ── Chart data: last 7 days attendance trend ──
+    week_data = []
+    for i in range(6, -1, -1):
+        d = (date.today() - timedelta(days=i)).isoformat()
+        cnt = conn.execute(
+            'SELECT COUNT(DISTINCT student_id) FROM attendance WHERE date=?', (d,)
+        ).fetchone()[0]
+        week_data.append({'date': d, 'count': cnt})
+
+    # ── Chart data: department-wise student count ──
+    dept_data = []
+    for d in departments:
+        dept_data.append({'department': d['department'] or 'Unknown', 'count': d['cnt']})
+
+    # ── Top students by attendance this month ──
+    month_start = date.today().replace(day=1).isoformat()
+    top_students = conn.execute('''
+        SELECT a.student_id, a.name, COUNT(DISTINCT a.date) as days
+        FROM attendance a
+        WHERE a.date >= ?
+        GROUP BY a.student_id, a.name
+        ORDER BY days DESC LIMIT 5
+    ''', (month_start,)).fetchall()
+
     conn.close()
     return render_template('dashboard.html',
                            total_students=total_students,
@@ -327,7 +391,10 @@ def dashboard():
                            today_absent=total_students - today_present,
                            recent=recent,
                            departments=departments,
-                           today=today)
+                           today=today,
+                           week_data=week_data,
+                           dept_data=dept_data,
+                           top_students=top_students)
 
 # ── Routes: Register ──────────────────────────────────────────────────────────
 @app.route('/register', methods=['GET', 'POST'])
@@ -383,6 +450,7 @@ def register():
             return redirect(request.url)
 
         flash(f'✅ {name} registered with {encoded}/{saved} usable photo(s).', 'success')
+        log_action('register_student', student_id, f'Registered {name} with {encoded} photos')
         return redirect(url_for('register'))
 
     # GET — show existing students
@@ -391,7 +459,7 @@ def register():
     conn.close()
     return render_template('register.html', students=students)
 
-@app.route('/students/delete/<student_id>')
+@app.route('/students/delete/<student_id>', methods=['POST'])
 @login_required
 def delete_student(student_id):
     engine.remove_encoding(student_id)
@@ -408,8 +476,50 @@ def delete_student(student_id):
         import shutil
         shutil.rmtree(student_dir)
 
+    logger.info(f'Student {student_id} deleted by {current_user.username}')
+    log_action('delete_student', student_id, f'Deleted student')
     flash('Student removed.', 'success')
     return redirect(url_for('register'))
+
+@app.route('/students/edit/<student_id>', methods=['GET', 'POST'])
+@login_required
+def edit_student(student_id):
+    conn = get_db()
+    student = conn.execute('SELECT * FROM students WHERE student_id=?', (student_id,)).fetchone()
+    if not student:
+        conn.close()
+        flash('Student not found.', 'danger')
+        return redirect(url_for('register'))
+
+    if request.method == 'POST':
+        name       = request.form['name'].strip()
+        email      = request.form.get('email', '').strip()
+        department = request.form.get('department', '').strip()
+        phone      = request.form.get('phone', '').strip()
+
+        conn.execute(
+            'UPDATE students SET name=?, email=?, department=?, phone=? WHERE student_id=?',
+            (name, email, department, phone, student_id)
+        )
+        conn.commit()
+        conn.close()
+
+        # Update name in face encodings too
+        try:
+            conn2 = get_db()
+            conn2.execute('UPDATE face_encodings SET name=? WHERE student_id=?', (name, student_id))
+            conn2.commit()
+            conn2.close()
+            engine.reload_encodings()
+        except Exception:
+            pass
+
+        logger.info(f'Student {student_id} edited by {current_user.username}')
+        flash(f'✅ {name} updated successfully.', 'success')
+        return redirect(url_for('register'))
+
+    conn.close()
+    return render_template('edit_student.html', student=student)
 
 # ── Routes: Camera ────────────────────────────────────────────────────────────
 @app.route('/camera')
@@ -419,18 +529,21 @@ def camera():
 
 @app.route('/camera/start')
 @login_required
+@csrf.exempt
 def camera_start():
     engine.open_camera(0)
     return ('', 204)
 
 @app.route('/camera/stop')
 @login_required
+@csrf.exempt
 def camera_stop():
     engine.close_camera()
     return ('', 204)
 
 @app.route('/video_feed')
 @login_required
+@csrf.exempt
 def video_feed():
     return Response(engine.gen_frames(),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
@@ -604,7 +717,7 @@ def approvals():
     return render_template('approvals.html', pending=pending, history=history)
 
 
-@app.route('/approvals/approve/<int:req_id>')
+@app.route('/approvals/approve/<int:req_id>', methods=['POST'])
 @login_required
 def approve_student(req_id):
     conn = get_db()
@@ -649,11 +762,12 @@ def approve_student(req_id):
     )
     conn.commit()
     conn.close()
+    logger.info(f'Student {req["name"]} approved by {current_user.username}')
     flash(f'{req["name"]} approved and registered!', 'success')
     return redirect(url_for('approvals'))
 
 
-@app.route('/approvals/reject/<int:req_id>')
+@app.route('/approvals/reject/<int:req_id>', methods=['POST'])
 @login_required
 def reject_student(req_id):
     conn = get_db()
@@ -666,6 +780,7 @@ def reject_student(req_id):
     )
     conn.commit()
     conn.close()
+    logger.info(f'Student request {req_id} rejected by {current_user.username}')
     flash('Request rejected.', 'warning')
     return redirect(url_for('approvals'))
 
@@ -705,12 +820,13 @@ def add_admin():
         conn.commit()
         conn.close()
         flash(f'✅ Admin "{username}" added successfully!', 'success')
+        log_action('add_admin', username, f'New admin account created')
     except DBIntegrityError:
         flash(f'Username "{username}" already exists.', 'danger')
 
     return redirect(url_for('settings'))
 
-@app.route('/settings/delete_admin/<int:admin_id>')
+@app.route('/settings/delete_admin/<int:admin_id>', methods=['POST'])
 @login_required
 def delete_admin(admin_id):
     if admin_id == current_user.id:
@@ -727,6 +843,7 @@ def delete_admin(admin_id):
     conn.execute('DELETE FROM admin WHERE id=?', (admin_id,))
     conn.commit()
     conn.close()
+    logger.info(f'Admin {admin_id} deleted by {current_user.username}')
     flash('Admin removed.', 'success')
     return redirect(url_for('settings'))
 
@@ -751,6 +868,141 @@ def reset_admin_password(admin_id):
     conn.close()
     flash('Password reset successfully.', 'success')
     return redirect(url_for('settings'))
+
+# ── Routes: Camera — Recent marks (AJAX) ─────────────────────────────────────
+@app.route('/camera/recent_marks')
+@login_required
+@csrf.exempt
+def recent_marks():
+    """Return recently marked students for the camera page live feed."""
+    today = date.today().isoformat()
+    conn  = get_db()
+    rows  = conn.execute('''
+        SELECT student_id, name, time FROM attendance
+        WHERE date=? ORDER BY time DESC LIMIT 10
+    ''', (today,)).fetchall()
+    conn.close()
+    return jsonify([{'student_id': r['student_id'], 'name': r['name'], 'time': str(r['time'])} for r in rows])
+
+# ── Routes: Student Profile ──────────────────────────────────────────────────
+@app.route('/student/<student_id>')
+@login_required
+def student_profile(student_id):
+    conn = get_db()
+    student = conn.execute('SELECT * FROM students WHERE student_id=?', (student_id,)).fetchone()
+    if not student:
+        conn.close()
+        flash('Student not found.', 'danger')
+        return redirect(url_for('register'))
+
+    # Attendance history
+    records = conn.execute('''
+        SELECT date, time, status FROM attendance
+        WHERE student_id=? ORDER BY date DESC, time DESC LIMIT 50
+    ''', (student_id,)).fetchall()
+
+    # Stats
+    total_days = conn.execute(
+        'SELECT COUNT(DISTINCT date) FROM attendance WHERE student_id=?', (student_id,)
+    ).fetchone()[0]
+    total_working = conn.execute('SELECT COUNT(DISTINCT date) FROM attendance').fetchone()[0]
+
+    # Monthly breakdown (cross-DB compatible)
+    if USE_PG:
+        monthly = conn.execute('''
+            SELECT to_char(date, 'YYYY-MM') as month, COUNT(DISTINCT date) as days
+            FROM attendance WHERE student_id=?
+            GROUP BY month ORDER BY month DESC LIMIT 6
+        ''', (student_id,)).fetchall()
+    else:
+        monthly = conn.execute('''
+            SELECT strftime('%%Y-%%m', date) as month, COUNT(DISTINCT date) as days
+            FROM attendance WHERE student_id=?
+            GROUP BY month ORDER BY month DESC LIMIT 6
+        ''', (student_id,)).fetchall()
+
+    conn.close()
+    pct = round((total_days / total_working * 100), 1) if total_working > 0 else 0
+
+    return render_template('student_profile.html',
+                           student=student,
+                           records=records,
+                           total_days=total_days,
+                           total_working=total_working,
+                           pct=pct,
+                           monthly=monthly)
+
+# ── Routes: Bulk CSV Import ──────────────────────────────────────────────────
+@app.route('/bulk-import', methods=['GET', 'POST'])
+@login_required
+def bulk_import():
+    if request.method == 'POST':
+        if 'csv_file' not in request.files or request.files['csv_file'].filename == '':
+            flash('Please upload a CSV file.', 'danger')
+            return redirect(request.url)
+
+        file = request.files['csv_file']
+        try:
+            df = pd.read_csv(file)
+        except Exception as e:
+            flash(f'Could not parse CSV: {e}', 'danger')
+            return redirect(request.url)
+
+        required = {'student_id', 'name'}
+        if not required.issubset(set(df.columns.str.lower().str.strip())):
+            flash('CSV must contain at least "student_id" and "name" columns.', 'danger')
+            return redirect(request.url)
+
+        df.columns = df.columns.str.lower().str.strip()
+        added, skipped, errors = 0, 0, 0
+
+        conn = get_db()
+        for _, row in df.iterrows():
+            sid  = str(row['student_id']).strip()
+            name = str(row['name']).strip()
+            if not sid or not name:
+                errors += 1
+                continue
+
+            email = str(row.get('email', '')).strip() if 'email' in df.columns else ''
+            dept  = str(row.get('department', '')).strip() if 'department' in df.columns else ''
+            phone = str(row.get('phone', '')).strip() if 'phone' in df.columns else ''
+
+            # Clean up NaN values
+            if email == 'nan': email = ''
+            if dept  == 'nan': dept  = ''
+            if phone == 'nan': phone = ''
+
+            try:
+                conn.execute(
+                    'INSERT INTO students (student_id, name, email, department, phone) VALUES (?,?,?,?,?)',
+                    (sid, name, email, dept, phone)
+                )
+                added += 1
+            except DBIntegrityError:
+                if USE_PG:
+                    conn.rollback()
+                skipped += 1
+
+        conn.commit()
+        conn.close()
+
+        log_action('bulk_import', f'{added} students', f'Added: {added}, Skipped: {skipped}, Errors: {errors}')
+        flash(f'✅ Import complete — {added} added, {skipped} skipped (duplicate), {errors} errors.', 'success')
+        return redirect(url_for('register'))
+
+    return render_template('bulk_import.html')
+
+# ── Routes: Audit Log ────────────────────────────────────────────────────────
+@app.route('/audit-log')
+@login_required
+def audit_log_view():
+    conn = get_db()
+    logs = conn.execute('''
+        SELECT * FROM audit_log ORDER BY timestamp DESC LIMIT 100
+    ''').fetchall()
+    conn.close()
+    return render_template('audit_log.html', logs=logs)
 
 # ── Run ───────────────────────────────────────────────────────────────────────
 if __name__ == '__main__':

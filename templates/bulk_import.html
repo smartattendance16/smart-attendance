@@ -1,0 +1,100 @@
+{% extends 'base.html' %}
+{% block title %}– Bulk Import{% endblock %}
+{% block page_title %}Bulk CSV Import{% endblock %}
+
+{% block content %}
+<div class="row g-4 justify-content-center">
+
+  <!-- ── Upload card ─────────────────────────────── -->
+  <div class="col-lg-6">
+    <div class="sa-card p-4">
+      <h6 class="fw-semibold mb-4">
+        <i class="bi bi-file-earmark-spreadsheet text-primary me-2"></i>
+        Import Students from CSV
+      </h6>
+
+      <form method="POST" enctype="multipart/form-data" class="loading-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+
+        <div class="mb-4">
+          <label class="form-label small fw-semibold">CSV File <span class="text-danger">*</span></label>
+          <input type="file" name="csv_file" class="form-control" accept=".csv" required>
+          <div class="form-text">
+            Upload a .csv file with student data. Max recommended: 500 rows.
+          </div>
+        </div>
+
+        <button type="submit" class="btn btn-primary w-100 py-2 fw-semibold"
+                onclick="showLoading('Importing students…')">
+          <i class="bi bi-upload me-1"></i> Import Students
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- ── Instructions ────────────────────────────── -->
+  <div class="col-lg-6">
+    <div class="sa-card p-4">
+      <h6 class="fw-semibold mb-3">
+        <i class="bi bi-info-circle-fill text-primary me-2"></i>
+        CSV Format Guide
+      </h6>
+
+      <p class="small text-muted mb-3">
+        Your CSV file must include the following columns. The first row should be headers:
+      </p>
+
+      <table class="table table-sm small mb-3">
+        <thead>
+          <tr>
+            <th>Column</th>
+            <th>Required</th>
+            <th>Example</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td><code>student_id</code></td><td><span class="text-danger">✓</span></td><td>STU001</td></tr>
+          <tr><td><code>name</code></td><td><span class="text-danger">✓</span></td><td>Ravi Kumar</td></tr>
+          <tr><td><code>email</code></td><td>Optional</td><td>ravi@example.com</td></tr>
+          <tr><td><code>department</code></td><td>Optional</td><td>CSE</td></tr>
+          <tr><td><code>phone</code></td><td>Optional</td><td>9876543210</td></tr>
+        </tbody>
+      </table>
+
+      <div class="alert alert-info py-2 small mb-3">
+        <i class="bi bi-lightbulb me-1"></i>
+        <strong>Tip:</strong> Column names are case-insensitive. Extra columns are ignored.
+      </div>
+
+      <!-- Example CSV -->
+      <h6 class="fw-semibold mb-2 small">Example CSV:</h6>
+      <div style="background:#f1f5f9;border-radius:8px;padding:.75rem 1rem;font-family:monospace;font-size:.8rem;overflow-x:auto">
+        student_id,name,email,department,phone<br>
+        STU001,Ravi Kumar,ravi@email.com,CSE,9876543210<br>
+        STU002,Priya Sharma,priya@email.com,ECE,9876543211<br>
+        STU003,Amit Verma,,CSE,
+      </div>
+
+      <div class="alert alert-warning py-2 small mt-3 mb-0">
+        <i class="bi bi-exclamation-triangle me-1"></i>
+        <strong>Note:</strong> Students with duplicate IDs will be skipped automatically.
+        Face photos must still be added manually after import.
+      </div>
+    </div>
+
+    <!-- Download Template -->
+    <div class="sa-card p-4 mt-3">
+      <h6 class="fw-semibold mb-2">
+        <i class="bi bi-file-earmark-arrow-down text-success me-1"></i> Download Template
+      </h6>
+      <p class="small text-muted mb-2">Download a blank CSV template to fill in:</p>
+      <a href="data:text/csv;charset=utf-8,student_id,name,email,department,phone%0A"
+         download="student_import_template.csv"
+         class="btn btn-outline-success btn-sm">
+        <i class="bi bi-download me-1"></i> Download Template
+      </a>
+    </div>
+  </div>
+
+</div>
+{% endblock %}

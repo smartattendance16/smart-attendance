@@ -2,9 +2,13 @@
 {% block title %}– Dashboard{% endblock %}
 {% block page_title %}Dashboard{% endblock %}
 
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+{% endblock %}
+
 {% block content %}
 
-<!-- ── Stat row ───────────────────────────────────── -->
+<!-- ── Stat row ───────────────────────────────── -->
 <div class="row g-3 mb-4">
   <div class="col-6 col-lg-3">
     <div class="stat-card" style="--icon-bg:#ede9fe;--icon-color:#7c3aed">
@@ -44,7 +48,7 @@
   </div>
 </div>
 
-<!-- ── Quick actions ──────────────────────────────── -->
+<!-- ── Quick actions ──────────────────────────── -->
 <div class="row g-3 mb-4">
   <div class="col-md-4">
     <a href="{{ url_for('camera') }}" class="btn btn-primary w-100 py-3 fw-semibold">
@@ -64,35 +68,190 @@
   </div>
 </div>
 
-<!-- ── Recent attendance table ────────────────────── -->
-<div class="sa-card">
-  <div class="sa-card-header">
-    <span class="fw-semibold">Recent Activity</span>
-    <a href="{{ url_for('report') }}" class="btn btn-sm btn-outline-primary">View All</a>
+<!-- ── Charts row ─────────────────────────────── -->
+<div class="row g-3 mb-4">
+  <!-- Weekly Trend -->
+  <div class="col-lg-8">
+    <div class="sa-card p-4">
+      <h6 class="fw-semibold mb-3">
+        <i class="bi bi-graph-up text-primary me-2"></i>Weekly Attendance Trend
+      </h6>
+      <div style="position:relative;height:260px;">
+        <canvas id="weeklyChart"></canvas>
+      </div>
+    </div>
   </div>
-  <div class="table-responsive">
-    <table class="sa-table">
-      <thead>
-        <tr>
-          <th>Student ID</th><th>Name</th><th>Department</th>
-          <th>Date</th><th>Time</th><th>Status</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for r in recent %}
-        <tr>
-          <td>{{ r.student_id }}</td>
-          <td class="fw-semibold">{{ r.name }}</td>
-          <td>{{ r.department or '—' }}</td>
-          <td>{{ r.date }}</td>
-          <td>{{ r.time }}</td>
-          <td><span class="badge-present">{{ r.status }}</span></td>
-        </tr>
+
+  <!-- Department Breakdown -->
+  <div class="col-lg-4">
+    <div class="sa-card p-4">
+      <h6 class="fw-semibold mb-3">
+        <i class="bi bi-pie-chart-fill text-primary me-2"></i>By Department
+      </h6>
+      <div style="position:relative;height:260px;display:flex;align-items:center;justify-content:center;">
+        {% if dept_data %}
+        <canvas id="deptChart"></canvas>
         {% else %}
-        <tr><td colspan="6" class="empty-row">No records yet.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
+        <p class="text-muted small text-center">No department data yet</p>
+        {% endif %}
+      </div>
+    </div>
   </div>
 </div>
+
+<!-- ── Top students + Recent attendance ────────── -->
+<div class="row g-3 mb-4">
+
+  <!-- Top Students This Month -->
+  <div class="col-lg-4">
+    <div class="sa-card">
+      <div class="sa-card-header">
+        <span class="fw-semibold"><i class="bi bi-trophy-fill text-warning me-1"></i> Top Students (This Month)</span>
+      </div>
+      <div class="p-3">
+        {% for s in top_students %}
+        <div class="d-flex align-items-center gap-3 mb-3">
+          <div class="rank-badge">{{ loop.index }}</div>
+          <div class="flex-grow-1">
+            <div class="fw-semibold small">{{ s.name }}</div>
+            <div class="text-muted" style="font-size:.75rem">{{ s.student_id }}</div>
+          </div>
+          <span class="badge-present">{{ s.days }} days</span>
+        </div>
+        {% else %}
+        <p class="text-center text-muted small py-3">No attendance data this month.</p>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Recent Activity -->
+  <div class="col-lg-8">
+    <div class="sa-card">
+      <div class="sa-card-header">
+        <span class="fw-semibold">Recent Activity</span>
+        <a href="{{ url_for('report') }}" class="btn btn-sm btn-outline-primary">View All</a>
+      </div>
+      <div class="table-responsive">
+        <table class="sa-table">
+          <thead>
+            <tr>
+              <th>Student ID</th><th>Name</th><th>Department</th>
+              <th>Date</th><th>Time</th><th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in recent %}
+            <tr>
+              <td>{{ r.student_id }}</td>
+              <td class="fw-semibold">{{ r.name }}</td>
+              <td>{{ r.department or '—' }}</td>
+              <td>{{ r.date }}</td>
+              <td>{{ r.time }}</td>
+              <td><span class="badge-present">{{ r.status }}</span></td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6" class="empty-row">No records yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // ── Weekly Attendance Trend Chart ──
+  const weekData = {{ week_data | tojson }};
+  const weekCtx  = document.getElementById('weeklyChart');
+  if (weekCtx) {
+    new Chart(weekCtx, {
+      type: 'line',
+      data: {
+        labels: weekData.map(d => {
+          const dt = new Date(d.date);
+          return dt.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+        }),
+        datasets: [{
+          label: 'Students Present',
+          data: weekData.map(d => d.count),
+          borderColor: '#4f46e5',
+          backgroundColor: 'rgba(79, 70, 229, 0.1)',
+          borderWidth: 3,
+          fill: true,
+          tension: 0.4,
+          pointBackgroundColor: '#4f46e5',
+          pointBorderColor: '#fff',
+          pointBorderWidth: 2,
+          pointRadius: 5,
+          pointHoverRadius: 7,
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: '#1e293b',
+            titleFont: { size: 13 },
+            bodyFont: { size: 12 },
+            padding: 12,
+            cornerRadius: 8,
+          }
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            ticks: { stepSize: 1, color: '#94a3b8', font: { size: 11 } },
+            grid: { color: 'rgba(148, 163, 184, 0.1)' }
+          },
+          x: {
+            ticks: { color: '#94a3b8', font: { size: 11 } },
+            grid: { display: false }
+          }
+        }
+      }
+    });
+  }
+
+  // ── Department Pie Chart ──
+  const deptData = {{ dept_data | tojson }};
+  const deptCtx  = document.getElementById('deptChart');
+  if (deptCtx && deptData.length > 0) {
+    const colors = ['#4f46e5','#7c3aed','#2563eb','#0891b2','#059669','#d97706','#dc2626','#be185d'];
+    new Chart(deptCtx, {
+      type: 'doughnut',
+      data: {
+        labels: deptData.map(d => d.department),
+        datasets: [{
+          data: deptData.map(d => d.count),
+          backgroundColor: colors.slice(0, deptData.length),
+          borderWidth: 0,
+          hoverOffset: 8,
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        cutout: '65%',
+        plugins: {
+          legend: {
+            position: 'bottom',
+            labels: {
+              padding: 12,
+              usePointStyle: true,
+              pointStyle: 'circle',
+              font: { size: 11 },
+              color: '#64748b',
+            }
+          }
+        }
+      }
+    });
+  }
+</script>
 {% endblock %}

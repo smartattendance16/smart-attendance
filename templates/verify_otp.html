@@ -62,6 +62,7 @@
   {% endwith %}
 
   <form method="POST" id="otpForm">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
     <!-- 6 individual boxes -->
     <div class="otp-inputs mb-4" id="otpBoxes">
       <input type="text" maxlength="1" class="otp-box" inputmode="numeric" autofocus>

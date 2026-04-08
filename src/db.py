@@ -164,6 +164,13 @@ def init_db(db_path=None):
                 student_id TEXT NOT NULL,
                 name       TEXT NOT NULL,
                 encoding   BYTEA NOT NULL)''',
+            '''CREATE TABLE IF NOT EXISTS audit_log (
+                id         SERIAL PRIMARY KEY,
+                timestamp  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                admin_user TEXT NOT NULL,
+                action     TEXT NOT NULL,
+                target     TEXT DEFAULT '',
+                details    TEXT DEFAULT '')''',
         ]:
             conn.execute(stmt)
 
@@ -215,6 +222,13 @@ def init_db(db_path=None):
                 student_id TEXT NOT NULL,
                 name       TEXT NOT NULL,
                 encoding   BLOB NOT NULL);
+            CREATE TABLE IF NOT EXISTS audit_log (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                admin_user TEXT NOT NULL,
+                action     TEXT NOT NULL,
+                target     TEXT DEFAULT '',
+                details    TEXT DEFAULT '');
         ''')
         conn.execute(
             "INSERT OR IGNORE INTO admin (username,password) VALUES (?,?)",

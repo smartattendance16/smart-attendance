@@ -1,0 +1,92 @@
+{% extends 'base.html' %}
+{% block title %}– Audit Log{% endblock %}
+{% block page_title %}Audit Log{% endblock %}
+
+{% block content %}
+<div class="sa-card">
+
+  <div class="sa-card-header">
+    <span class="fw-semibold">
+      <i class="bi bi-journal-text text-primary me-2"></i>
+      Activity Log
+    </span>
+    <span class="text-muted small">Last 100 actions</span>
+  </div>
+
+  <div class="table-responsive" style="max-height:600px;overflow-y:auto">
+    <table class="sa-table" id="logTable">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Timestamp</th>
+          <th>Admin</th>
+          <th>Action</th>
+          <th>Target</th>
+          <th>Details</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for log in logs %}
+        <tr>
+          <td class="text-muted">{{ log.id }}</td>
+          <td>
+            <span class="small">{{ log.timestamp }}</span>
+          </td>
+          <td>
+            <span class="fw-semibold">
+              <i class="bi bi-person-circle me-1 text-muted"></i>{{ log.admin_user }}
+            </span>
+          </td>
+          <td>
+            {% set action = log.action %}
+            {% if action == 'login' %}
+              <span class="badge bg-primary" style="font-size:.75rem">🔑 Login</span>
+            {% elif action == 'register_student' %}
+              <span class="badge bg-success" style="font-size:.75rem">👤 Register</span>
+            {% elif action == 'delete_student' %}
+              <span class="badge bg-danger" style="font-size:.75rem">🗑️ Delete</span>
+            {% elif action == 'edit_student' %}
+              <span class="badge bg-info" style="font-size:.75rem">✏️ Edit</span>
+            {% elif action == 'approve_student' %}
+              <span class="badge bg-success" style="font-size:.75rem">✅ Approve</span>
+            {% elif action == 'reject_student' %}
+              <span class="badge bg-warning text-dark" style="font-size:.75rem">❌ Reject</span>
+            {% elif action == 'add_admin' %}
+              <span class="badge bg-primary" style="font-size:.75rem">👑 Add Admin</span>
+            {% elif action == 'delete_admin' %}
+              <span class="badge bg-danger" style="font-size:.75rem">🗑️ Del Admin</span>
+            {% elif action == 'bulk_import' %}
+              <span class="badge bg-info" style="font-size:.75rem">📋 Import</span>
+            {% else %}
+              <span class="badge bg-secondary" style="font-size:.75rem">{{ action }}</span>
+            {% endif %}
+          </td>
+          <td><code class="small">{{ log.target }}</code></td>
+          <td class="text-muted small">{{ log.details }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="empty-row">
+          <i class="bi bi-journal-x" style="font-size:2rem;color:var(--text-light)"></i>
+          <p class="mt-2 mb-0">No audit entries yet.</p>
+          <p class="text-muted small">Actions like login, register, delete, and approve will appear here.</p>
+        </td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+</div>
+
+<!-- Info Box -->
+<div class="sa-card p-4 mt-3">
+  <h6 class="fw-semibold mb-2">
+    <i class="bi bi-info-circle-fill text-primary me-1"></i> About the Audit Log
+  </h6>
+  <ul class="small text-secondary mb-0" style="line-height:2">
+    <li>All admin actions are <strong>automatically recorded</strong>.</li>
+    <li>Includes: logins, student registrations, deletions, approvals, rejections, admin management.</li>
+    <li>Shows the last <strong>100 entries</strong> for performance.</li>
+    <li>Timestamps are in server timezone.</li>
+  </ul>
+</div>
+{% endblock %}

@@ -35,6 +35,9 @@
       </button>
     </div>
     <div class="col-auto ms-auto d-flex gap-2">
+      <button class="btn btn-sm btn-outline-secondary" onclick="window.print()" title="Print Report">
+        <i class="bi bi-printer"></i> Print
+      </button>
       <a href="{{ url_for('export') }}?date_from={{ date_from }}&date_to={{ date_to }}&format=csv"
          class="btn btn-sm btn-outline-secondary">
         <i class="bi bi-filetype-csv"></i> CSV

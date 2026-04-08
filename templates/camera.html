@@ -43,6 +43,21 @@
 
   <!-- Side panel -->
   <div class="col-lg-4 d-flex flex-column gap-3">
+
+    <!-- Live Marked Students -->
+    <div class="sa-card p-4">
+      <h6 class="fw-semibold mb-3">
+        <i class="bi bi-check-circle-fill text-success me-1"></i> Recently Marked
+        <span class="badge bg-success rounded-pill ms-1" id="markedCount">0</span>
+      </h6>
+      <div id="markedList" style="max-height:240px;overflow-y:auto;">
+        <p class="text-muted small text-center" id="noMarked">
+          No students marked yet today.
+        </p>
+      </div>
+    </div>
+
+    <!-- How it works -->
     <div class="sa-card p-4">
       <h6 class="fw-semibold mb-3">
         <i class="bi bi-lightning-charge-fill text-warning me-1"></i> How it works
@@ -56,6 +71,7 @@
       </ol>
     </div>
 
+    <!-- Quick Links -->
     <div class="sa-card p-4">
       <h6 class="fw-semibold mb-3">
         <i class="bi bi-calendar-check-fill text-success me-1"></i> Quick Links
@@ -77,6 +93,8 @@
 
 {% block scripts %}
 <script>
+  let pollingInterval = null;
+
   function startCamera() {
     fetch('{{ url_for("camera_start") }}').then(() => {
       document.getElementById('feed').src        = '{{ url_for("video_feed") }}';
@@ -86,6 +104,9 @@
       document.getElementById('btnStop').classList.remove('d-none');
       document.getElementById('cameraStatus').textContent = 'LIVE';
       document.getElementById('liveDot').classList.add('active');
+      // Start polling for marked students
+      pollRecentMarks();
+      pollingInterval = setInterval(pollRecentMarks, 3000);
     });
   }
 
@@ -98,7 +119,50 @@
       document.getElementById('btnStart').classList.remove('d-none');
       document.getElementById('cameraStatus').textContent = 'Camera Off';
       document.getElementById('liveDot').classList.remove('active');
+      if (pollingInterval) clearInterval(pollingInterval);
     });
   }
+
+  function pollRecentMarks() {
+    fetch('{{ url_for("recent_marks") }}')
+      .then(r => r.json())
+      .then(data => {
+        const list  = document.getElementById('markedList');
+        const count = document.getElementById('markedCount');
+        const noMsg = document.getElementById('noMarked');
+
+        count.textContent = data.length;
+
+        if (data.length === 0) {
+          if (noMsg) noMsg.style.display = '';
+          return;
+        }
+
+        if (noMsg) noMsg.style.display = 'none';
+
+        // Build fresh list
+        let html = '';
+        data.forEach((s, i) => {
+          html += `
+            <div class="d-flex align-items-center gap-2 mb-2 p-2 rounded-3 ${i === 0 ? 'mark-highlight' : ''}"
+                 style="background:${i === 0 ? 'rgba(22,163,74,0.08)' : 'transparent'};transition:background .5s">
+              <div class="rank-badge" style="background:#dcfce7;color:#16a34a;font-size:.7rem;width:28px;height:28px">
+                <i class="bi bi-check-lg"></i>
+              </div>
+              <div class="flex-grow-1">
+                <div class="fw-semibold small">${s.name}</div>
+                <div class="text-muted" style="font-size:.7rem">${s.student_id}</div>
+              </div>
+              <span class="text-muted" style="font-size:.75rem">${s.time}</span>
+            </div>
+          `;
+        });
+        list.innerHTML = html;
+      })
+      .catch(() => {});
+  }
+
+  // Initial load of recent marks
+  pollRecentMarks();
 </script>
 {% endblock %}

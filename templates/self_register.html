@@ -80,6 +80,7 @@
   {% endwith %}
 
   <form method="POST" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
 
     <!-- Step 1 — Details -->
     <p class="small fw-semibold text-secondary mb-2">
