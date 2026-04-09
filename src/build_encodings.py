@@ -107,6 +107,21 @@ def build(verbose: bool = False):
     with open(ENCODINGS_PKL, 'wb') as f:
         pickle.dump(data, f)
 
+    # ── Also sync to face_encodings DB table ──────────────────────────────
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute('DELETE FROM face_encodings')  # rebuild from scratch
+        for i in range(len(encodings_list)):
+            conn.execute(
+                'INSERT INTO face_encodings (student_id, name, encoding) VALUES (?,?,?)',
+                (ids_list[i], names_list[i], encodings_list[i].tobytes())
+            )
+        conn.commit()
+        conn.close()
+        print(f'[DB] Synced {len(encodings_list)} encodings to face_encodings table')
+    except Exception as e:
+        print(f'[WARNING] Could not sync to DB: {e}')
+
     print(f'\n[DONE] {total_encoded}/{total_images} encodings saved -> {ENCODINGS_PKL}')
     print(f'   Students encoded: {len(set(ids_list))}')
 

@@ -23,7 +23,11 @@ from flask_wtf.csrf import CSRFProtect
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from db import get_db as _raw_get_db, init_db as _raw_init_db, DBIntegrityError, USE_PG
-from attendance_engine import AttendanceEngine
+from attendance_engine import AttendanceEngine, DETECTION_MODEL
+
+import cv2
+import numpy as np
+import face_recognition
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
@@ -425,10 +429,13 @@ def register():
             f.save(img_path)
             saved += 1
 
-            enc = engine.encode_image_file(img_path)
-            if enc is not None:
-                engine.add_encoding(student_id, name, enc)
+            # Generate multiple augmented encodings per image for better accuracy
+            multi_encs = engine.encode_image_file_multi(img_path)
+            if multi_encs:
+                for enc in multi_encs:
+                    engine.add_encoding(student_id, name, enc)
                 encoded += 1
+                logger.info(f'[REGISTER] {student_id}: {len(multi_encs)} encodings from image {idx+1}')
             else:
                 os.remove(img_path)
 
@@ -868,6 +875,85 @@ def reset_admin_password(admin_id):
     conn.close()
     flash('Password reset successfully.', 'success')
     return redirect(url_for('settings'))
+
+# ── Routes: Camera — Browser webcam recognition (for cloud deploy) ────────────
+@app.route('/camera/recognize_frame', methods=['POST'])
+@login_required
+@csrf.exempt
+def recognize_frame():
+    """Accept a base64 JPEG frame from the browser webcam, run face recognition,
+    and return results as JSON. This enables camera to work on Render/cloud."""
+    import base64
+    data = request.get_json(silent=True)
+    if not data or 'image' not in data:
+        return jsonify({'error': 'No image'}), 400
+
+    try:
+        # Decode base64 image (strip data:image/jpeg;base64, prefix if present)
+        img_data = data['image']
+        if ',' in img_data:
+            img_data = img_data.split(',', 1)[1]
+        img_bytes = base64.b64decode(img_data)
+
+        # Convert to numpy array
+        nparr = np.frombuffer(img_bytes, np.uint8)
+        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        if frame is None:
+            return jsonify({'error': 'Invalid image'}), 400
+
+        # Run recognition using engine
+        scale = engine.FRAME_SCALE
+        small = cv2.resize(frame, (0, 0), fx=scale, fy=scale)
+        rgb_small = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
+        rgb_small = engine._preprocess_frame(rgb_small)
+
+        locations = face_recognition.face_locations(rgb_small, model=DETECTION_MODEL)
+        encs = face_recognition.face_encodings(rgb_small, locations, num_jitters=1)
+
+        inv_scale = int(1 / scale)
+        results = []
+        for enc, loc in zip(encs, locations):
+            top, right, bottom, left = loc
+            face_w = right - left
+            face_h = bottom - top
+            if face_w < engine.MIN_FACE_WIDTH or face_h < engine.MIN_FACE_WIDTH:
+                continue
+
+            student_id, name, conf = engine._match_face(enc)
+            # Scale back to original coordinates
+            t, r, b, l = [v * inv_scale for v in loc]
+
+            if student_id:
+                # Track consecutive frames for confirmation
+                engine._pending_marks[student_id] = \
+                    engine._pending_marks.get(student_id, 0) + 1
+                marked = False
+                if engine._pending_marks[student_id] >= engine.CONFIRM_FRAMES:
+                    marked = engine.mark_attendance(student_id, name)
+
+                results.append({
+                    'name': name,
+                    'student_id': student_id,
+                    'confidence': round(conf * 100),
+                    'box': [l, t, r, b],
+                    'marked': marked,
+                    'known': True
+                })
+            else:
+                results.append({
+                    'name': 'Unknown',
+                    'student_id': None,
+                    'confidence': 0,
+                    'box': [l, t, r, b],
+                    'marked': False,
+                    'known': False
+                })
+
+        return jsonify({'faces': results})
+
+    except Exception as e:
+        logger.error(f'recognize_frame error: {e}')
+        return jsonify({'error': str(e)}), 500
 
 # ── Routes: Camera — Recent marks (AJAX) ─────────────────────────────────────
 @app.route('/camera/recent_marks')

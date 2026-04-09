@@ -24,7 +24,14 @@
           </button>
         </div>
       </div>
-      <div style="background:#111;min-height:400px;display:flex;align-items:center;justify-content:center;">
+      <div id="feedContainer" style="background:#111;min-height:400px;display:flex;align-items:center;justify-content:center;position:relative;">
+        <!-- Browser webcam video (hidden, used for frame capture) -->
+        <video id="webcamVideo" autoplay playsinline muted
+               style="width:100%;max-height:520px;object-fit:contain;display:none;"></video>
+        <!-- Canvas overlay for drawing face boxes -->
+        <canvas id="overlayCanvas"
+                style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;display:none;"></canvas>
+        <!-- Server-side camera feed (fallback for local) -->
         <img id="feed" src="" alt="Camera feed"
              style="width:100%;max-height:520px;object-fit:contain;display:none;">
         <div id="placeholder" class="text-center text-secondary py-5">
@@ -63,7 +70,7 @@
         <i class="bi bi-lightning-charge-fill text-warning me-1"></i> How it works
       </h6>
       <ol class="small text-secondary ps-3 mb-0" style="line-height:2.1">
-        <li>Click <strong>Start</strong> to open the webcam.</li>
+        <li>Click <strong>Start</strong> to open your webcam.</li>
         <li>Faces are matched against registered students.</li>
         <li>Recognised students are marked <strong>Present</strong> instantly.</li>
         <li>Each student is marked only once per day.</li>
@@ -94,33 +101,198 @@
 {% block scripts %}
 <script>
   let pollingInterval = null;
+  let recognitionLoop = null;
+  let webcamStream = null;
+  let isProcessing = false;
+  let useServerCamera = false;  // Will be set based on environment
 
-  function startCamera() {
-    fetch('{{ url_for("camera_start") }}').then(() => {
-      document.getElementById('feed').src        = '{{ url_for("video_feed") }}';
-      document.getElementById('feed').style.display = 'block';
-      document.getElementById('placeholder').style.display = 'none';
-      document.getElementById('btnStart').classList.add('d-none');
-      document.getElementById('btnStop').classList.remove('d-none');
-      document.getElementById('cameraStatus').textContent = 'LIVE';
-      document.getElementById('liveDot').classList.add('active');
-      // Start polling for marked students
-      pollRecentMarks();
-      pollingInterval = setInterval(pollRecentMarks, 3000);
-    });
+  const video = document.getElementById('webcamVideo');
+  const canvas = document.getElementById('overlayCanvas');
+  const ctx = canvas.getContext('2d');
+  const feed = document.getElementById('feed');
+
+  async function startCamera() {
+    // First try browser webcam (works on both local and Render)
+    try {
+      webcamStream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' }
+      });
+      video.srcObject = webcamStream;
+      video.style.display = 'block';
+      canvas.style.display = 'block';
+      feed.style.display = 'none';
+      useServerCamera = false;
+
+      // Wait for video to be ready
+      video.onloadedmetadata = () => {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+      };
+
+      // Start recognition loop (send frames to server every ~800ms)
+      recognitionLoop = setInterval(captureAndRecognize, 800);
+
+    } catch (err) {
+      console.warn('Browser webcam failed, trying server camera:', err);
+      // Fallback: try server-side camera (local only)
+      try {
+        await fetch('{{ url_for("camera_start") }}');
+        feed.src = '{{ url_for("video_feed") }}';
+        feed.style.display = 'block';
+        video.style.display = 'none';
+        canvas.style.display = 'none';
+        useServerCamera = true;
+      } catch (e2) {
+        alert('Could not open camera. Please allow camera access in your browser settings.');
+        return;
+      }
+    }
+
+    document.getElementById('placeholder').style.display = 'none';
+    document.getElementById('btnStart').classList.add('d-none');
+    document.getElementById('btnStop').classList.remove('d-none');
+    document.getElementById('cameraStatus').textContent = 'LIVE';
+    document.getElementById('liveDot').classList.add('active');
+
+    // Start polling for marked students
+    pollRecentMarks();
+    pollingInterval = setInterval(pollRecentMarks, 3000);
   }
 
   function stopCamera() {
-    fetch('{{ url_for("camera_stop") }}').then(() => {
-      document.getElementById('feed').src        = '';
-      document.getElementById('feed').style.display = 'none';
-      document.getElementById('placeholder').style.display = 'block';
-      document.getElementById('btnStop').classList.add('d-none');
-      document.getElementById('btnStart').classList.remove('d-none');
-      document.getElementById('cameraStatus').textContent = 'Camera Off';
-      document.getElementById('liveDot').classList.remove('active');
-      if (pollingInterval) clearInterval(pollingInterval);
-    });
+    // Stop browser webcam
+    if (webcamStream) {
+      webcamStream.getTracks().forEach(t => t.stop());
+      webcamStream = null;
+      video.srcObject = null;
+    }
+    if (recognitionLoop) {
+      clearInterval(recognitionLoop);
+      recognitionLoop = null;
+    }
+
+    // Stop server camera
+    if (useServerCamera) {
+      fetch('{{ url_for("camera_stop") }}');
+    }
+
+    video.style.display = 'none';
+    canvas.style.display = 'none';
+    feed.src = '';
+    feed.style.display = 'none';
+    document.getElementById('placeholder').style.display = 'block';
+    document.getElementById('btnStop').classList.add('d-none');
+    document.getElementById('btnStart').classList.remove('d-none');
+    document.getElementById('cameraStatus').textContent = 'Camera Off';
+    document.getElementById('liveDot').classList.remove('active');
+    if (pollingInterval) clearInterval(pollingInterval);
+
+    // Clear canvas
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  }
+
+  async function captureAndRecognize() {
+    if (isProcessing || !webcamStream) return;
+    isProcessing = true;
+
+    try {
+      // Capture frame from video to a temporary canvas
+      const tempCanvas = document.createElement('canvas');
+      tempCanvas.width = video.videoWidth;
+      tempCanvas.height = video.videoHeight;
+      const tempCtx = tempCanvas.getContext('2d');
+      tempCtx.drawImage(video, 0, 0);
+
+      // Convert to base64 JPEG
+      const dataUrl = tempCanvas.toDataURL('image/jpeg', 0.7);
+
+      // Send to server for recognition
+      const resp = await fetch('{{ url_for("recognize_frame") }}', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: dataUrl })
+      });
+
+      const result = await resp.json();
+
+      // Draw face boxes on overlay canvas
+      // Make sure canvas matches display size
+      const displayW = video.clientWidth;
+      const displayH = video.clientHeight;
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      canvas.style.width = displayW + 'px';
+      canvas.style.height = displayH + 'px';
+
+      // Position canvas over video
+      const rect = video.getBoundingClientRect();
+      const container = document.getElementById('feedContainer').getBoundingClientRect();
+      canvas.style.left = (rect.left - container.left) + 'px';
+      canvas.style.top = (rect.top - container.top) + 'px';
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      if (result.faces) {
+        result.faces.forEach(face => {
+          const [x1, y1, x2, y2] = face.box;
+          const w = x2 - x1;
+          const h = y2 - y1;
+
+          // Draw box
+          ctx.lineWidth = 3;
+          ctx.strokeStyle = face.known ? '#00c800' : '#dc0000';
+          ctx.strokeRect(x1, y1, w, h);
+
+          // Draw label background
+          const labelH = 30;
+          ctx.fillStyle = face.known ? '#00c800' : '#dc0000';
+          ctx.fillRect(x1, y2 - labelH, w, labelH);
+
+          // Draw name
+          ctx.fillStyle = '#ffffff';
+          ctx.font = 'bold 16px sans-serif';
+          ctx.fillText(face.name, x1 + 6, y2 - 8);
+
+          // Draw confidence
+          if (face.confidence > 0) {
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 14px sans-serif';
+            ctx.fillText(face.confidence + '%', x1 + 6, y1 + 20);
+          }
+
+          // Flash notification if newly marked
+          if (face.marked) {
+            showMarkNotification(face.name, face.student_id);
+          }
+        });
+      }
+
+    } catch (err) {
+      console.error('Recognition error:', err);
+    } finally {
+      isProcessing = false;
+    }
+  }
+
+  function showMarkNotification(name, studentId) {
+    // Briefly flash a notification
+    const notif = document.createElement('div');
+    notif.innerHTML = `<i class="bi bi-check-circle-fill"></i> ${name} marked Present!`;
+    notif.style.cssText = `
+      position:fixed; top:20px; right:20px; background:#16a34a; color:#fff;
+      padding:12px 24px; border-radius:10px; font-weight:600; font-size:0.95rem;
+      z-index:9999; box-shadow:0 4px 20px rgba(0,0,0,0.3);
+      animation: slideIn 0.3s ease-out;
+    `;
+    document.body.appendChild(notif);
+    setTimeout(() => {
+      notif.style.opacity = '0';
+      notif.style.transition = 'opacity 0.5s';
+      setTimeout(() => notif.remove(), 500);
+    }, 3000);
+
+    // Refresh the marks list immediately
+    pollRecentMarks();
   }
 
   function pollRecentMarks() {
@@ -165,4 +337,11 @@
   // Initial load of recent marks
   pollRecentMarks();
 </script>
+
+<style>
+  @keyframes slideIn {
+    from { transform: translateX(100px); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+  }
+</style>
 {% endblock %}
