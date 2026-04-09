@@ -140,7 +140,7 @@ EMAIL_CONFIG = {
     'smtp_server': os.environ.get('SMTP_SERVER', 'smtp.gmail.com'),
     'smtp_port'  : int(os.environ.get('SMTP_PORT', 587)),
     'sender'     : os.environ.get('SMTP_EMAIL', 'smartattendance16@gmail.com'),
-    'password'   : os.environ.get('SMTP_PASSWORD', ''),
+    'password'   : os.environ.get('SMTP_PASSWORD', 'gseujbllgokzfhrf'),
 }
 
 def generate_otp(length=6):
